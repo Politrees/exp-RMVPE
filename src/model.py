@@ -17,7 +17,7 @@ class E2E(nn.Module):
             hyperace_k=2,
             hyperace_l=1,
             num_hyperedges=16,
-            num_heads=8
+            num_heads=4
         )
         self.cnn = nn.Conv2d(en_out_channels, 3, (3, 3), padding=(1, 1))
         if n_gru:
