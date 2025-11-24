@@ -31,6 +31,7 @@ def train():
     
     iterations = 200000
     learning_rate_decay_steps = 2000
+    warmup_steps = int(len(data_loader) * 3)
     learning_rate_decay_rate = 0.98
     resume_iteration = None
 
@@ -39,13 +40,13 @@ def train():
     
     model = E2E0(4, 1, (2, 2)).to(device)
     if resume_iteration is None:
-        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
         resume_iteration = 0
     else:
         model_path = os.path.join(logdir, f'model_{resume_iteration}.pt')
         ckpt = torch.load(model_path, map_location=torch.device(device))
         model.load_state_dict(ckpt['model'])
-        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
     scheduler = StepLR(optimizer, step_size=learning_rate_decay_steps, gamma=learning_rate_decay_rate)
     summary(model)
@@ -54,6 +55,12 @@ def train():
     RPA, RCA, OA, VFA, VR, it = 0, 0, 0, 0, 0, 0
 
     for i, data in zip(loop, cycle(data_loader)):
+        if i <= warmup_steps:
+            warmup_factor = float(i) / float(warmup_steps)
+            warmup_factor = max(warmup_factor, 1e-6)
+            
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = learning_rate * warmup_factor
         mel = data['mel'].to(device)
         pitch_label = data['pitch'].to(device)
         pitch_pred = model(mel)
@@ -67,7 +74,8 @@ def train():
         if clip_grad_norm:
             clip_grad_norm_(model.parameters(), clip_grad_norm)
         optimizer.step()
-        scheduler.step()
+        if i > warmup_steps:
+            scheduler.step()
         writer.add_scalar('loss/loss_pitch', loss.item(), global_step=i)
 
         if i % validation_interval == 0:
