@@ -91,17 +91,29 @@ class MIR1K(Dataset):
         wav, _ = librosa.load(audio_path, sr=SAMPLE_RATE, mono=False)
         if len(wav.shape) > 1: 
             noise = wav[0]
-            noise = np.pad(noise, (WINDOW_LENGTH, WINDOW_LENGTH), mode='reflect')
-            noise = torch.from_numpy(noise).float()
             audio = wav[1]
         else:
             noise = None
             audio = wav
 
         n_frames = len(audio) // self.HOP_LENGTH + 1
+        min_frames = 129
+        
+        if n_frames < min_frames:
+            missing_frames = min_frames - n_frames
+            missing_samples = missing_frames * self.HOP_LENGTH
+            audio = np.pad(audio, (0, missing_samples), mode='constant')
+            if noise is not None:
+                noise = np.pad(noise, (0, missing_samples), mode='constant')
+            n_frames = min_frames
+
         audio = np.pad(audio, (WINDOW_LENGTH, WINDOW_LENGTH), mode='reflect')
         audio = torch.from_numpy(audio).float()
         
+        if noise is not None:
+            noise = np.pad(noise, (WINDOW_LENGTH, WINDOW_LENGTH), mode='reflect')
+            noise = torch.from_numpy(noise).float()
+
         cent = torch.zeros(n_frames, dtype=torch.float)
         voice = torch.zeros(n_frames, dtype=torch.float)
         with open(label_path, 'r') as f:
