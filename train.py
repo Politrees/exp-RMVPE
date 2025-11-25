@@ -23,6 +23,7 @@ def train():
     validation_interval = 2000
     clip_grad_norm = 3
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    only_latest = True
 
     train_dataset = MIR1K('Hybrid', hop_length, ['train'], whole_audio=False, use_aug=True)
     validation_dataset = MIR1K('Hybrid', hop_length, ['test'], whole_audio=True, use_aug=False)
@@ -101,11 +102,13 @@ def train():
                     f.write(str(OA) + '\t')
                     f.write(str(VR) + '\t')
                     f.write(str(VFA) + '\n')
+                
+                model_filename = 'model_latest.pt' if only_latest else f'model_{i}.pt'
                 torch.save({
                     'model': model.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'scheduler': scheduler.state_dict()
-                }, os.path.join(logdir, f'model_{i}.pt'))
+                }, os.path.join(logdir, model_filename))
             model.train()
 
 if __name__ == '__main__':
