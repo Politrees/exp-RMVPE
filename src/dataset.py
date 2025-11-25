@@ -110,7 +110,6 @@ class MIR1K(Dataset):
             for line in lines:
                 i += 1
                 if float(line) != 0 and i < n_frames:
-                    freq = 440 * (2.0 ** ((float(line) - 69.0) / 12.0))
                     cent[i] = 1200 * np.log2(freq / 10)
                     voice[i] = 1
         self.paths.append(audio_path)
