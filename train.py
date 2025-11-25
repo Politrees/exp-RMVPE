@@ -39,16 +39,20 @@ def train():
     writer = SummaryWriter(logdir)
     
     model = E2E0(4, 1, (2, 2)).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    scheduler = StepLR(optimizer, step_size=learning_rate_decay_steps, gamma=learning_rate_decay_rate)
+
     if resume_iteration is None:
-        optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
         resume_iteration = 0
     else:
         model_path = os.path.join(logdir, f'model_{resume_iteration}.pt')
         ckpt = torch.load(model_path, map_location=torch.device(device))
         model.load_state_dict(ckpt['model'])
-        optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+        if 'optimizer' in ckpt:
+            optimizer.load_state_dict(ckpt['optimizer'])
+        if 'scheduler' in ckpt:
+            scheduler.load_state_dict(ckpt['scheduler'])
 
-    scheduler = StepLR(optimizer, step_size=learning_rate_decay_steps, gamma=learning_rate_decay_rate)
     summary(model)
 
     loop = tqdm(range(resume_iteration + 1, iterations + 1))
@@ -97,7 +101,11 @@ def train():
                     f.write(str(OA) + '\t')
                     f.write(str(VR) + '\t')
                     f.write(str(VFA) + '\n')
-                torch.save({'model': model.state_dict()}, os.path.join(logdir, f'model_{i}.pt'))
+                torch.save({
+                    'model': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'scheduler': scheduler.state_dict()
+                }, os.path.join(logdir, f'model_{i}.pt'))
             model.train()
 
 if __name__ == '__main__':
