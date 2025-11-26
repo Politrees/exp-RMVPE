@@ -80,8 +80,8 @@ def train():
         pitch_pred = model(mel)
         loss = bce(pitch_pred, pitch_label)
 
-        print(i, end='\t')
-        print('loss_total:', loss.item())
+        loop.set_description(f"Iter {i}") 
+        loop.set_postfix(loss_total=loss.item())
 
         optimizer.zero_grad()
         loss.backward()
