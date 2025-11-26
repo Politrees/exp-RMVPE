@@ -49,6 +49,8 @@ def train():
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     scheduler = StepLR(optimizer, step_size=learning_rate_decay_steps, gamma=learning_rate_decay_rate)
 
+    best_rpa = 0.0
+
     if should_resume:
         ckpt = torch.load(resume_path, map_location=torch.device(device))
         model.load_state_dict(ckpt['model'])
@@ -58,7 +60,8 @@ def train():
         if 'scheduler' in ckpt:
             scheduler.load_state_dict(ckpt['scheduler'])
         
-        resume_iteration = ckpt.get('iteration', 0) 
+        resume_iteration = ckpt.get('iteration', 0)
+        best_rpa = ckpt.get('best_rpa', 0.0) 
 
     summary(model)
 
@@ -109,13 +112,26 @@ def train():
                     f.write(str(VR) + '\t')
                     f.write(str(VFA) + '\n')
                 
-                model_filename = 'model_latest.pt' if only_latest else f'model_{i}.pt'
-                torch.save({
+                is_best = False
+                if rpa >= best_rpa:
+                    best_rpa = rpa
+                    is_best = True
+                    print(f'New best model at {i}!')
+
+                checkpoint_dict = {
                     'iteration': i,
                     'model': model.state_dict(),
                     'optimizer': optimizer.state_dict(),
-                    'scheduler': scheduler.state_dict()
-                }, os.path.join(logdir, model_filename))
+                    'scheduler': scheduler.state_dict(),
+                    'best_rpa': best_rpa
+                }
+
+                if is_best:
+                    torch.save(checkpoint_dict, os.path.join(logdir, 'model_best.pt'))
+
+                model_filename = 'model_latest.pt' if only_latest else f'model_{i}.pt'
+                torch.save(checkpoint_dict, os.path.join(logdir, model_filename))
+                
             model.train()
 
 if __name__ == '__main__':
