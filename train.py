@@ -1,5 +1,4 @@
 import os
-
 import torch
 from torch import nn
 from torch.nn.utils import clip_grad_norm_
@@ -17,8 +16,15 @@ def train():
     logdir = 'runs/Hybrid_bce'
 
     hop_length = 160
+    optimizer_type = 'adam'
 
-    learning_rate = 5e-4
+    if optimizer_type == 'adamw':
+        learning_rate = 1e-4
+        weight_decay = 0.01
+    else:
+        learning_rate = 5e-4
+        weight_decay = 0
+
     batch_size = 16
     validation_interval = 2000
     clip_grad_norm = 3
@@ -46,19 +52,28 @@ def train():
     writer = SummaryWriter(logdir)
     
     model = E2E0(4, 1, (2, 2)).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    if optimizer_type == 'adamw':
+        optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, betas=(0.9, 0.999), weight_decay=weight_decay, eps=1e-8)
+    else:
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = StepLR(optimizer, step_size=learning_rate_decay_steps, gamma=learning_rate_decay_rate)
 
     best_rpa = 0.0
 
     if should_resume:
-        ckpt = torch.load(resume_path, map_location=torch.device(device))
+        ckpt = torch.load(resume_path, map_location=torch.device(device), weights_only=False)
         model.load_state_dict(ckpt['model'])
         
         if 'optimizer' in ckpt:
-            optimizer.load_state_dict(ckpt['optimizer'])
+            try:
+                optimizer.load_state_dict(ckpt['optimizer'])
+            except:
+                pass
         if 'scheduler' in ckpt:
-            scheduler.load_state_dict(ckpt['scheduler'])
+            try:
+                scheduler.load_state_dict(ckpt['scheduler'])
+            except:
+                pass
         
         resume_iteration = ckpt.get('iteration', 0)
         best_rpa = ckpt.get('best_rpa', 0.0) 
@@ -103,7 +118,9 @@ def train():
                 oa = np.mean(metrics['OA'])
                 vr = np.mean(metrics['VR'])
                 vfa = np.mean(metrics['VFA'])
+                
                 RPA, RCA, OA, VR, VFA, it = rpa, rca, oa, vr, vfa, i
+                
                 with open(os.path.join(logdir, 'result.txt'), 'a') as f:
                     f.write(str(i) + '\t')
                     f.write(str(RPA) + '\t')
