@@ -19,8 +19,8 @@ def train():
     optimizer_type = 'adam'
 
     if optimizer_type == 'adamw':
-        learning_rate = 1e-4
-        weight_decay = 0.01
+        learning_rate = 3e-4
+        weight_decay = 1e-4
     else:
         learning_rate = 5e-4
         weight_decay = 0
