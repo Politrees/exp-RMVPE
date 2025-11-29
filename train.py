@@ -1,5 +1,6 @@
 import os
 import torch
+import re
 from torch import nn
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import StepLR
@@ -10,6 +11,21 @@ import numpy as np
 
 from src import MIR1K, E2E0, cycle, summary, SAMPLE_RATE, bce
 from evaluate import evaluate
+
+
+def find_latest_iteration(logdir):
+    if not os.path.exists(logdir):
+        return None
+    
+    model_files = [f for f in os.listdir(logdir) if f.startswith('model_') and f.endswith('.pt')]
+    
+    iterations = []
+    for f in model_files:
+        match = re.search(r'model_(\d+)\.pt', f)
+        if match:
+            iterations.append(int(match.group(1)))
+    
+    return max(iterations) if iterations else None
 
 
 def train():
@@ -41,8 +57,19 @@ def train():
     warmup_steps = int(len(data_loader) * 3)
     learning_rate_decay_rate = 0.98
 
-    resume_path = os.path.join(logdir, 'model_latest.pt') if only_latest else None
-    if only_latest and os.path.exists(resume_path):
+    resume_path = None
+    if only_latest:
+        potential_path = os.path.join(logdir, 'model_latest.pt')
+        if os.path.exists(potential_path):
+            resume_path = potential_path
+    else:
+        latest_iter = find_latest_iteration(logdir)
+        if latest_iter is not None:
+            resume_path = os.path.join(logdir, f'model_{latest_iter}.pt')
+        elif os.path.exists(os.path.join(logdir, 'model_latest.pt')):
+            resume_path = os.path.join(logdir, 'model_latest.pt')
+
+    if resume_path and os.path.exists(resume_path):
         should_resume = True
     else:
         should_resume = False
@@ -61,6 +88,7 @@ def train():
     best_rpa = 0.0
 
     if should_resume:
+        print(f"Resuming from {resume_path}")
         ckpt = torch.load(resume_path, map_location=torch.device(device), weights_only=False)
         model.load_state_dict(ckpt['model'])
         
