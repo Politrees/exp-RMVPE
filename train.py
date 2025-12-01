@@ -33,14 +33,7 @@ def train():
 
     hop_length = 160
     optimizer_type = 'adam'
-
-    if optimizer_type == 'adamw':
-        learning_rate = 3e-4
-        weight_decay = 1e-4
-    else:
-        learning_rate = 5e-4
-        weight_decay = 0
-
+    learning_rate = 5e-4
     batch_size = 16
     validation_interval = 2000
     clip_grad_norm = 3
@@ -80,7 +73,7 @@ def train():
     
     model = E2E0(4, 1, (2, 2)).to(device)
     if optimizer_type == 'adamw':
-        optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, betas=(0.9, 0.999), weight_decay=weight_decay, eps=1e-8)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, betas=(0.9, 0.999), eps=1e-8)
     else:
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = StepLR(optimizer, step_size=learning_rate_decay_steps, gamma=learning_rate_decay_rate)
