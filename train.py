@@ -1,6 +1,7 @@
 import os
 import torch
 import re
+import sys
 from torch import nn
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import StepLR
@@ -72,6 +73,11 @@ def train():
     writer = SummaryWriter(logdir)
     
     model = E2E0(4, 1, (2, 2)).to(device)
+
+    if torch.cuda.device_count() > 1:
+        print(f"Using {torch.cuda.device_count()} GPUs")
+        model = nn.DataParallel(model)
+
     if optimizer_type == 'adamw':
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, betas=(0.9, 0.999), eps=1e-8)
     else:
@@ -83,7 +89,20 @@ def train():
     if should_resume:
         print(f"Resuming from {resume_path}")
         ckpt = torch.load(resume_path, map_location=torch.device(device), weights_only=False)
-        model.load_state_dict(ckpt['model'])
+        
+        state_dict = ckpt['model']
+        if isinstance(model, nn.DataParallel):
+             if list(state_dict.keys())[0].startswith('module.'):
+                 model.load_state_dict(state_dict)
+             else:
+                 new_state_dict = {'module.'+k: v for k, v in state_dict.items()}
+                 model.load_state_dict(new_state_dict)
+        else:
+            if list(state_dict.keys())[0].startswith('module.'):
+                new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+                model.load_state_dict(new_state_dict)
+            else:
+                model.load_state_dict(state_dict)
         
         if 'optimizer' in ckpt:
             try:
@@ -99,7 +118,8 @@ def train():
         resume_iteration = ckpt.get('iteration', 0)
         best_rpa = ckpt.get('best_rpa', 0.0) 
 
-    summary(model)
+    if not isinstance(model, nn.DataParallel):
+        summary(model)
 
     loop = tqdm(range(resume_iteration + 1, iterations + 1))
     RPA, RCA, OA, VFA, VR, it = 0, 0, 0, 0, 0, 0
@@ -131,7 +151,9 @@ def train():
         if i % validation_interval == 0:
             model.eval()
             with torch.no_grad():
-                metrics = evaluate(validation_dataset, model, hop_length, device)
+                eval_model = model.module if isinstance(model, nn.DataParallel) else model
+                metrics = evaluate(validation_dataset, eval_model, hop_length, device)
+                
                 for key, value in metrics.items():
                     writer.add_scalar('stage_pitch/' + key, np.mean(value), global_step=i)
                 rpa = np.mean(metrics['RPA'])
@@ -156,9 +178,11 @@ def train():
                     is_best = True
                     print(f'New best model at {i}!')
 
+                model_to_save = model.module if isinstance(model, nn.DataParallel) else model
+
                 checkpoint_dict = {
                     'iteration': i,
-                    'model': model.state_dict(),
+                    'model': model_to_save.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'scheduler': scheduler.state_dict(),
                     'best_rpa': best_rpa
@@ -172,5 +196,14 @@ def train():
                 
             model.train()
 
+    print("Training finished.")
+    writer.close()
+
 if __name__ == '__main__':
-    train()
+    try:
+        train()
+    except KeyboardInterrupt:
+        print("Interrupted by user.")
+    finally:
+        print("Exiting...")
+        sys.exit(0)
