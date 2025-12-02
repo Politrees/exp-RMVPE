@@ -37,14 +37,14 @@ class MIR1K(Dataset):
         if n < min_n:
             pad_n = min_n - n
             pad_s = pad_n * self.HOP_LENGTH
-            
-            audio = torch.nn.functional.pad(data_buffer['audio'][:-WINDOW_LENGTH], (0, pad_s + WINDOW_LENGTH), mode='constant')
+
+            audio = torch.nn.functional.pad(data_buffer['audio'], (0, pad_s), mode='constant')
             
             if data_buffer['noise'] is not None:
-                noise = torch.nn.functional.pad(data_buffer['noise'][:-WINDOW_LENGTH], (0, pad_s + WINDOW_LENGTH), mode='constant')
+                noise = torch.nn.functional.pad(data_buffer['noise'], (0, pad_s), mode='constant')
             else:
                 noise = None
-                
+            
             cent = torch.nn.functional.pad(data_buffer['cent'], (0, pad_n), mode='constant')
             voice = torch.nn.functional.pad(data_buffer['voice'], (0, pad_n), mode='constant')
             n = min_n 
