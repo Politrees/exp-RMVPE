@@ -172,5 +172,14 @@ def train():
                 
             model.train()
 
+    print("Training finished.")
+    writer.close()
+
 if __name__ == '__main__':
-    train()
+    try:
+        train()
+    except KeyboardInterrupt:
+        print("Interrupted by user.")
+    finally:
+        print("Exiting...")
+        sys.exit(0)
