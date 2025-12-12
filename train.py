@@ -1,6 +1,7 @@
 import os
 import torch
 import re
+import sys
 from torch import nn
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import StepLR
@@ -8,10 +9,14 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import numpy as np
-
-from src import MIR1K, E2E0, cycle, summary, SAMPLE_RATE, bce
+from src.model import E2E0
+from src.utils import summary, cycle
+from src.loss import bce
+from src.dataset import HYBRID
 from evaluate import evaluate
 
+now_dir = os.getcwd()
+sys.path.append(now_dir)
 
 def find_latest_iteration(logdir):
     if not os.path.exists(logdir):
@@ -34,21 +39,21 @@ def train():
     hop_length = 160
     optimizer_type = 'adam'
     learning_rate = 5e-4
-    batch_size = 16
+    batch_size = 100
     validation_interval = 2000
     clip_grad_norm = 3
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    only_latest = True
+    only_latest = False
 
-    train_dataset = MIR1K('Hybrid', hop_length, ['train'], whole_audio=False, use_aug=True)
-    validation_dataset = MIR1K('Hybrid', hop_length, ['test'], whole_audio=True, use_aug=False)
+    train_dataset = HYBRID('hybrid', hop_length, ['train'], whole_audio=False, use_aug=True)
+    validation_dataset = HYBRID('hybrid', hop_length, ['test'], whole_audio=True, use_aug=False)
 
     data_loader = DataLoader(train_dataset, batch_size, shuffle=True, drop_last=True, pin_memory=True, persistent_workers=True, num_workers=2)
     
     iterations = 200000
     learning_rate_decay_steps = 2000
     warmup_steps = int(len(data_loader) * 3)
-    learning_rate_decay_rate = 0.98
+    learning_rate_decay_rate = 0.99
 
     resume_path = None
     if only_latest:
@@ -71,7 +76,12 @@ def train():
     os.makedirs(logdir, exist_ok=True)
     writer = SummaryWriter(logdir)
     
-    model = E2E0(4, 1, (2, 2)).to(device)
+    model = E2E0(1, 1, 16).to(device)
+
+    if torch.cuda.device_count() > 1:
+        print(f"Using {torch.cuda.device_count()} GPUs")
+        model = nn.DataParallel(model)
+
     if optimizer_type == 'adamw':
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, betas=(0.9, 0.999), eps=1e-8)
     else:
@@ -83,7 +93,20 @@ def train():
     if should_resume:
         print(f"Resuming from {resume_path}")
         ckpt = torch.load(resume_path, map_location=torch.device(device), weights_only=False)
-        model.load_state_dict(ckpt['model'])
+        
+        state_dict = ckpt['model']
+        if isinstance(model, nn.DataParallel):
+             if list(state_dict.keys())[0].startswith('module.'):
+                 model.load_state_dict(state_dict)
+             else:
+                 new_state_dict = {'module.'+k: v for k, v in state_dict.items()}
+                 model.load_state_dict(new_state_dict)
+        else:
+            if list(state_dict.keys())[0].startswith('module.'):
+                new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+                model.load_state_dict(new_state_dict)
+            else:
+                model.load_state_dict(state_dict)
         
         if 'optimizer' in ckpt:
             try:
@@ -99,10 +122,11 @@ def train():
         resume_iteration = ckpt.get('iteration', 0)
         best_rpa = ckpt.get('best_rpa', 0.0) 
 
-    summary(model)
+    if not isinstance(model, nn.DataParallel):
+        summary(model)
 
     loop = tqdm(range(resume_iteration + 1, iterations + 1))
-    RPA, RCA, OA, VFA, VR, it = 0, 0, 0, 0, 0, 0
+    RPA, RCA, OA, VFA, VR = 0, 0, 0, 0, 0
 
     for i, data in zip(loop, cycle(data_loader)):
         if i <= warmup_steps:
@@ -131,7 +155,8 @@ def train():
         if i % validation_interval == 0:
             model.eval()
             with torch.no_grad():
-                metrics = evaluate(validation_dataset, model, hop_length, device)
+                eval_model = model.module if isinstance(model, nn.DataParallel) else model
+                metrics = evaluate(validation_dataset, eval_model, hop_length, device)
                 for key, value in metrics.items():
                     writer.add_scalar('stage_pitch/' + key, np.mean(value), global_step=i)
                 rpa = np.mean(metrics['RPA'])
@@ -140,7 +165,7 @@ def train():
                 vr = np.mean(metrics['VR'])
                 vfa = np.mean(metrics['VFA'])
                 
-                RPA, RCA, OA, VR, VFA, it = rpa, rca, oa, vr, vfa, i
+                RPA, RCA, OA, VR, VFA = rpa, rca, oa, vr, vfa
                 
                 with open(os.path.join(logdir, 'result.txt'), 'a') as f:
                     f.write(str(i) + '\t')
@@ -156,9 +181,10 @@ def train():
                     is_best = True
                     print(f'New best model at {i}!')
 
+                model_to_save = model.module if isinstance(model, nn.DataParallel) else model
                 checkpoint_dict = {
                     'iteration': i,
-                    'model': model.state_dict(),
+                    'model': model_to_save.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'scheduler': scheduler.state_dict(),
                     'best_rpa': best_rpa

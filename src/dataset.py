@@ -9,6 +9,165 @@ from tqdm import tqdm
 from glob import glob
 from .constants import *
 from .spec import MelSpectrogram
+import pandas as pd
+
+class HYBRID(Dataset):
+    def __init__(self, path, hop_length, groups=None, whole_audio=False, use_aug=True):
+        self.path = path
+        self.HOP_LENGTH = hop_length
+        self.num_class = N_CLASS
+        self.whole_audio = whole_audio
+        self.use_aug = use_aug
+        self.paths = []
+        self.data_buffer = {}
+        self.mel = MelSpectrogram(N_MELS, SAMPLE_RATE, WINDOW_LENGTH, hop_length, None, MEL_FMIN, MEL_FMAX)
+
+        print(f"Loading {len(groups)} group{'s' if len(groups) > 1 else ''} "
+              f"of {self.__class__.__name__} at {path}")
+        for group in groups:
+            for input_files in tqdm(self.files(group), desc='Loading group %s' % group):
+                self.load(*input_files)
+
+    def _generate_natural_silence(self, length, noise_level='low'):
+        silence = cn.powerlaw_psd_gaussian(1, length)
+        
+        noise_levels = {
+            'low': -60,
+            'medium': -50,
+            'high': -40
+        }
+        
+        db_level = noise_levels.get(noise_level, -60)
+        amplitude = 10 ** (db_level / 20)
+        
+        silence = torch.from_numpy(silence).float() * amplitude
+        return silence
+    
+    def __getitem__(self, index):
+        audio_path = self.paths[index]
+        data_buffer = self.data_buffer[audio_path]
+        
+        n = data_buffer['len']
+        min_n = 129
+        
+        if n < min_n:
+            pad_n = min_n - n
+            pad_s = pad_n * self.HOP_LENGTH
+            
+            natural_silence = self._generate_natural_silence(pad_s)
+            
+            audio = torch.cat([
+                data_buffer['audio'][:-WINDOW_LENGTH],
+                natural_silence,
+                torch.zeros(WINDOW_LENGTH)
+            ])
+            
+            if data_buffer['noise'] is not None:
+                noise_silence = self._generate_natural_silence(pad_s, noise_level='medium')
+                noise = torch.cat([
+                    data_buffer['noise'][:-WINDOW_LENGTH],
+                    noise_silence,
+                    torch.zeros(WINDOW_LENGTH)
+                ])
+            else:
+                noise = None
+                
+            cent = torch.nn.functional.pad(data_buffer['cent'], (0, pad_n), mode='constant')
+            voice = torch.nn.functional.pad(data_buffer['voice'], (0, pad_n), mode='constant')
+            n = min_n 
+        else:
+            audio = data_buffer['audio']
+            noise = data_buffer['noise']
+            cent = data_buffer['cent']
+            voice = data_buffer['voice']
+        
+        start_frame = 0 if self.whole_audio else random.randint(1, n - 128)
+        end_frame = n if self.whole_audio else start_frame + 128
+        
+        if self.use_aug:
+            key_shift = random.uniform(0, 5)
+        else:
+            key_shift = 0
+        factor = 2 ** (key_shift / 12)
+        win_length_new = int(np.round(WINDOW_LENGTH * factor))
+        start_id = WINDOW_LENGTH + start_frame * self.HOP_LENGTH - win_length_new // 2
+        end_id = WINDOW_LENGTH + (end_frame - 1) * self.HOP_LENGTH + (win_length_new + 1) // 2
+        
+        aud = audio[start_id : end_id]
+        if self.use_aug:
+            if noise is None:
+                noi = cn.powerlaw_psd_gaussian(random.uniform(0, 2), len(aud))
+                noi = torch.from_numpy(noi).float() * (10 ** random.uniform(-6, -1))
+            else:
+                noi = random.uniform(-1, 1) * noise[start_id : end_id]
+            audio_aug = aud + noi
+            max_amp = float(torch.max(torch.abs(audio_aug))) + 1e-5
+            max_shift = min(1, np.log10(1 / max_amp))
+            log10_vol_shift = random.uniform(-1, max_shift)
+            audio_aug = audio_aug * (10 ** log10_vol_shift)
+        else:
+            if noise is None:
+                noi = 0
+            else:
+                noi = noise[start_id : end_id]
+            audio_aug = aud + noi
+            
+        mel = self.mel(audio_aug.unsqueeze(0), keyshift = key_shift, center=False).squeeze(0)
+        c = cent[start_frame : end_frame] + 1200 * np.log2(win_length_new / WINDOW_LENGTH)
+        v = voice[start_frame : end_frame]
+        
+        index = (c - CONST) / 20
+        pitch_label = torch.exp(-(torch.arange(N_CLASS).expand(end_frame - start_frame, -1) - index.unsqueeze(-1)) ** 2 / 2 / 1.25 ** 2)
+        pitch_label = pitch_label * v.unsqueeze(-1)
+        return dict(mel=mel, pitch=pitch_label, file=audio_path)
+
+    def __len__(self):
+        return len(self.data_buffer)
+
+    @staticmethod
+    def availabe_groups():
+        return ['test']
+
+    def files(self, group):
+        audio_files = glob(os.path.join(self.path, group, '*.wav'))
+        label_files = [f.replace('_m.wav', '.pv') for f in audio_files]
+
+        assert (all(os.path.isfile(audio_v_file) for audio_v_file in audio_files))
+        assert (all(os.path.isfile(label_file) for label_file in label_files))
+
+        return sorted(zip(audio_files, label_files))
+
+    def load(self, audio_path, label_path):
+        wav, _ = librosa.load(audio_path, sr=SAMPLE_RATE, mono=False)
+        if len(wav.shape) > 1: 
+            noise = wav[0]
+            audio = wav[1]
+        else:
+            noise = None
+            audio = wav
+
+        n_frames = len(audio) // self.HOP_LENGTH + 1
+        
+        audio = np.pad(audio, (WINDOW_LENGTH, WINDOW_LENGTH), mode='reflect')
+        audio = torch.from_numpy(audio).float()
+        
+        if noise is not None:
+            noise = np.pad(noise, (WINDOW_LENGTH, WINDOW_LENGTH), mode='reflect')
+            noise = torch.from_numpy(noise).float()
+
+        cent = torch.zeros(n_frames, dtype=torch.float)
+        voice = torch.zeros(n_frames, dtype=torch.float)
+        with open(label_path, 'r') as f:
+            lines = f.readlines()
+            i = 0
+            for line in lines:
+                i += 1
+                if float(line) != 0 and i < n_frames:
+                    freq = float(line) if os.path.splitext(os.path.basename(audio_path))[0].endswith('_p') else 440 * (2.0 ** ((float(line) - 69.0) / 12.0))
+                    cent[i] = 1200 * np.log2(freq / 10)
+                    voice[i] = 1
+        self.paths.append(audio_path)
+        self.data_buffer[audio_path] = {'len': n_frames, 'audio': audio, 'noise': noise, 'cent': cent, 'voice': voice}
 
 class MIR1K(Dataset):
     def __init__(self, path, hop_length, groups=None, whole_audio=False, use_aug=True):

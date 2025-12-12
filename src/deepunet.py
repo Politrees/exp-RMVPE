@@ -1,8 +1,6 @@
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .constants import N_MELS
-from .yolov13_modules import DSConv, DS_C3k2, HyperACE, GatedFusion, Conv
+from .yolo import DSConv, DS_C3k2, HyperACE, GatedFusion, Conv
 
 class YOLO13Encoder(nn.Module):
     def __init__(self, in_channels, base_channels=32):

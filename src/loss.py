@@ -28,3 +28,20 @@ def FL(inputs, targets, alpha, gamma):
     F_loss = torch.mean(weight_gamma * loss_w)
     return F_loss
 
+
+def mae(input, target):
+    l1_loss = nn.L1Loss(reduce=False)
+    loss = l1_loss(input, target)
+    return torch.mean(loss)
+
+
+def mse(input, target):
+    l2_loss = nn.MSELoss(reduce=False)
+    loss = l2_loss(input, target)
+    return torch.mean(loss)
+
+
+def ce(input, target):
+    ce = nn.CrossEntropyLoss(reduce=False)
+    loss = ce(input, target)
+    return torch.mean(loss)

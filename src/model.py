@@ -1,14 +1,11 @@
-import torch
 from torch import nn
 from .deepunet import DeepUnet
 from .constants import *
-from .spec import MelSpectrogram
 from .seq import BiGRU
 
 
 class E2E0(nn.Module):
-    def __init__(self, n_blocks, n_gru, kernel_size, en_de_layers=5, inter_layers=4, in_channels=1,
-                 en_out_channels=16):
+    def __init__(self, n_gru, in_channels=1, en_out_channels=16):
         super(E2E0, self).__init__()
         self.unet = DeepUnet(
             in_channels=in_channels, 
