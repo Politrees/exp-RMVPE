@@ -7,7 +7,6 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from tqdm import tqdm
 import numpy as np
 from src.model import E2E0
 from src.utils import summary, cycle
@@ -39,8 +38,10 @@ def train():
     hop_length = 160
     optimizer_type = 'adam'
     learning_rate = 5e-4
-    batch_size = 100
+    batch_size = 16
     validation_interval = 2000
+    print_interval = 100
+    log_interval = 10
     clip_grad_norm = 3
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     only_latest = False
@@ -125,23 +126,20 @@ def train():
     if not isinstance(model, nn.DataParallel):
         summary(model)
 
-    loop = tqdm(range(resume_iteration + 1, iterations + 1))
     RPA, RCA, OA, VFA, VR = 0, 0, 0, 0, 0
 
-    for i, data in zip(loop, cycle(data_loader)):
+    for i, data in zip(range(resume_iteration + 1, iterations + 1), cycle(data_loader)):
         if i <= warmup_steps:
             warmup_factor = float(i) / float(warmup_steps)
             warmup_factor = max(warmup_factor, 1e-6)
             
             for param_group in optimizer.param_groups:
                 param_group['lr'] = learning_rate * warmup_factor
+        
         mel = data['mel'].to(device)
         pitch_label = data['pitch'].to(device)
         pitch_pred = model(mel)
         loss = bce(pitch_pred, pitch_label)
-
-        loop.set_description(f"Iter {i}") 
-        loop.set_postfix(loss_total=loss.item())
 
         optimizer.zero_grad()
         loss.backward()
@@ -150,7 +148,15 @@ def train():
         optimizer.step()
         if i > warmup_steps:
             scheduler.step()
-        writer.add_scalar('loss/loss_pitch', loss.item(), global_step=i)
+
+        # Запись в TB каждые log_interval итераций
+        if i % log_interval == 0:
+            writer.add_scalar('loss/loss_pitch', loss.item(), global_step=i)
+
+        # print каждые print_interval итераций
+        if i % print_interval == 0:
+            lr = optimizer.param_groups[0]['lr']
+            print(f"Iter {i}/{iterations} | Loss: {loss.item():.6f} | LR: {lr:.2e}")
 
         if i % validation_interval == 0:
             model.eval()
@@ -166,6 +172,8 @@ def train():
                 vfa = np.mean(metrics['VFA'])
                 
                 RPA, RCA, OA, VR, VFA = rpa, rca, oa, vr, vfa
+                
+                print(f"=== Validation @ {i} | RPA: {rpa:.4f} | RCA: {rca:.4f} | OA: {oa:.4f} ===")
                 
                 with open(os.path.join(logdir, 'result.txt'), 'a') as f:
                     f.write(str(i) + '\t')
