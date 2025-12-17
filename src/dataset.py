@@ -11,6 +11,7 @@ from .constants import *
 from .spec import MelSpectrogram
 import pandas as pd
 
+
 class HYBRID(Dataset):
     def __init__(self, path, hop_length, groups=None, whole_audio=False, use_aug=True):
         self.path = path
@@ -93,13 +94,13 @@ class HYBRID(Dataset):
         start_id = WINDOW_LENGTH + start_frame * self.HOP_LENGTH - win_length_new // 2
         end_id = WINDOW_LENGTH + (end_frame - 1) * self.HOP_LENGTH + (win_length_new + 1) // 2
         
-        aud = audio[start_id : end_id]
+        aud = audio[start_id:end_id]
         if self.use_aug:
             if noise is None:
                 noi = cn.powerlaw_psd_gaussian(random.uniform(0, 2), len(aud))
                 noi = torch.from_numpy(noi).float() * (10 ** random.uniform(-6, -1))
             else:
-                noi = random.uniform(-1, 1) * noise[start_id : end_id]
+                noi = random.uniform(-1, 1) * noise[start_id:end_id]
             audio_aug = aud + noi
             max_amp = float(torch.max(torch.abs(audio_aug))) + 1e-5
             max_shift = min(1, np.log10(1 / max_amp))
@@ -109,12 +110,12 @@ class HYBRID(Dataset):
             if noise is None:
                 noi = 0
             else:
-                noi = noise[start_id : end_id]
+                noi = noise[start_id:end_id]
             audio_aug = aud + noi
             
-        mel = self.mel(audio_aug.unsqueeze(0), keyshift = key_shift, center=False).squeeze(0)
-        c = cent[start_frame : end_frame] + 1200 * np.log2(win_length_new / WINDOW_LENGTH)
-        v = voice[start_frame : end_frame]
+        mel = self.mel(audio_aug.unsqueeze(0), keyshift=key_shift, center=False).squeeze(0)
+        c = cent[start_frame:end_frame] + 1200 * np.log2(win_length_new / WINDOW_LENGTH)
+        v = voice[start_frame:end_frame]
         
         index = (c - CONST) / 20
         pitch_label = torch.exp(-(torch.arange(N_CLASS).expand(end_frame - start_frame, -1) - index.unsqueeze(-1)) ** 2 / 2 / 1.25 ** 2)
@@ -157,17 +158,24 @@ class HYBRID(Dataset):
 
         cent = torch.zeros(n_frames, dtype=torch.float)
         voice = torch.zeros(n_frames, dtype=torch.float)
+        
         with open(label_path, 'r') as f:
             lines = f.readlines()
-            i = 0
-            for line in lines:
-                i += 1
-                if float(line) != 0 and i < n_frames:
-                    freq = float(line) if os.path.splitext(os.path.basename(audio_path))[0].endswith('_p') else 440 * (2.0 ** ((float(line) - 69.0) / 12.0))
+            for i, line in enumerate(lines):
+                if i >= n_frames:
+                    break
+                try:
+                    value = float(line.strip())
+                except ValueError:
+                    continue  # пропускаем нечисловые строки (заголовки и т.п.)
+                if value != 0:
+                    freq = value if os.path.splitext(os.path.basename(audio_path))[0].endswith('_p') else 440 * (2.0 ** ((value - 69.0) / 12.0))
                     cent[i] = 1200 * np.log2(freq / 10)
                     voice[i] = 1
+                    
         self.paths.append(audio_path)
         self.data_buffer[audio_path] = {'len': n_frames, 'audio': audio, 'noise': noise, 'cent': cent, 'voice': voice}
+
 
 class MIR1K(Dataset):
     def __init__(self, path, hop_length, groups=None, whole_audio=False, use_aug=True):
@@ -225,13 +233,13 @@ class MIR1K(Dataset):
         start_id = WINDOW_LENGTH + start_frame * self.HOP_LENGTH - win_length_new // 2
         end_id = WINDOW_LENGTH + (end_frame - 1) * self.HOP_LENGTH + (win_length_new + 1) // 2
         
-        aud = audio[start_id : end_id]
+        aud = audio[start_id:end_id]
         if self.use_aug:
             if noise is None:
                 noi = cn.powerlaw_psd_gaussian(random.uniform(0, 2), len(aud))
                 noi = torch.from_numpy(noi).float() * (10 ** random.uniform(-6, -1))
             else:
-                noi = random.uniform(-1, 1) * noise[start_id : end_id]
+                noi = random.uniform(-1, 1) * noise[start_id:end_id]
             audio_aug = aud + noi
             max_amp = float(torch.max(torch.abs(audio_aug))) + 1e-5
             max_shift = min(1, np.log10(1 / max_amp))
@@ -241,12 +249,12 @@ class MIR1K(Dataset):
             if noise is None:
                 noi = 0
             else:
-                noi = noise[start_id : end_id]
+                noi = noise[start_id:end_id]
             audio_aug = aud + noi
             
-        mel = self.mel(audio_aug.unsqueeze(0), keyshift = key_shift, center=False).squeeze(0)
-        c = cent[start_frame : end_frame] + 1200 * np.log2(win_length_new / WINDOW_LENGTH)
-        v = voice[start_frame : end_frame]
+        mel = self.mel(audio_aug.unsqueeze(0), keyshift=key_shift, center=False).squeeze(0)
+        c = cent[start_frame:end_frame] + 1200 * np.log2(win_length_new / WINDOW_LENGTH)
+        v = voice[start_frame:end_frame]
         
         index = (c - CONST) / 20
         pitch_label = torch.exp(-(torch.arange(N_CLASS).expand(end_frame - start_frame, -1) - index.unsqueeze(-1)) ** 2 / 2 / 1.25 ** 2)
@@ -289,15 +297,21 @@ class MIR1K(Dataset):
 
         cent = torch.zeros(n_frames, dtype=torch.float)
         voice = torch.zeros(n_frames, dtype=torch.float)
+        
         with open(label_path, 'r') as f:
             lines = f.readlines()
-            i = 0
-            for line in lines:
-                i += 1
-                if float(line) != 0 and i < n_frames:
-                    freq = float(line) if os.path.splitext(os.path.basename(audio_path))[0].endswith('_p') else 440 * (2.0 ** ((float(line) - 69.0) / 12.0))
+            for i, line in enumerate(lines):
+                if i >= n_frames:
+                    break
+                try:
+                    value = float(line.strip())
+                except ValueError:
+                    continue  # пропускаем нечисловые строки (заголовки и т.п.)
+                if value != 0:
+                    freq = value if os.path.splitext(os.path.basename(audio_path))[0].endswith('_p') else 440 * (2.0 ** ((value - 69.0) / 12.0))
                     cent[i] = 1200 * np.log2(freq / 10)
                     voice[i] = 1
+                    
         self.paths.append(audio_path)
         self.data_buffer[audio_path] = {'len': n_frames, 'audio': audio, 'noise': noise, 'cent': cent, 'voice': voice}
 

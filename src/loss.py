@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 
 def smoothl1(inputs, targets, alpha=None):
-    loss_f = nn.SmoothL1Loss(reduce=False)
+    loss_f = nn.SmoothL1Loss(reduction='none')
     weight = torch.ones(inputs.shape, dtype=torch.float).to(inputs.device)
     if alpha is not None:
         weight[targets != 0] = float(alpha)
@@ -19,10 +19,10 @@ def bce(inputs, targets):
 
 
 def FL(inputs, targets, alpha, gamma):
-    loss = F.binary_cross_entropy(inputs, targets, reduce=False)
+    loss = F.binary_cross_entropy(inputs, targets, reduction='none')
     weight = torch.ones(inputs.shape, dtype=torch.float).to(inputs.device)
     weight[targets == 1] = float(alpha)
-    loss_w = F.binary_cross_entropy(inputs, targets, weight=weight, reduce=False)
+    loss_w = F.binary_cross_entropy(inputs, targets, weight=weight, reduction='none')
     pt = torch.exp(-loss)
     weight_gamma = (1 - pt) ** gamma
     F_loss = torch.mean(weight_gamma * loss_w)
@@ -30,18 +30,18 @@ def FL(inputs, targets, alpha, gamma):
 
 
 def mae(input, target):
-    l1_loss = nn.L1Loss(reduce=False)
+    l1_loss = nn.L1Loss(reduction='none')
     loss = l1_loss(input, target)
     return torch.mean(loss)
 
 
 def mse(input, target):
-    l2_loss = nn.MSELoss(reduce=False)
+    l2_loss = nn.MSELoss(reduction='none')
     loss = l2_loss(input, target)
     return torch.mean(loss)
 
 
 def ce(input, target):
-    ce = nn.CrossEntropyLoss(reduce=False)
+    ce = nn.CrossEntropyLoss(reduction='none')
     loss = ce(input, target)
     return torch.mean(loss)
