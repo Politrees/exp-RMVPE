@@ -33,7 +33,7 @@ def find_latest_iteration(logdir):
 
 
 def train():
-    logdir = 'runs/Hybrid_bce'
+    logdir = '/content/drive/MyDrive/RMPVE'
 
     hop_length = 160
     optimizer_type = 'adam'
@@ -46,8 +46,8 @@ def train():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     only_latest = False
 
-    train_dataset = HYBRID('hybrid', hop_length, ['train'], whole_audio=False, use_aug=True)
-    validation_dataset = HYBRID('hybrid', hop_length, ['test'], whole_audio=True, use_aug=False)
+    train_dataset = HYBRID('/content/drive/MyDrive/dataset', hop_length, ['train'], whole_audio=False, use_aug=True)
+    validation_dataset = HYBRID('/content/drive/MyDrive/dataset', hop_length, ['test'], whole_audio=True, use_aug=False)
 
     data_loader = DataLoader(train_dataset, batch_size, shuffle=True, drop_last=True, pin_memory=True, persistent_workers=True, num_workers=2)
     
@@ -80,7 +80,7 @@ def train():
     model = E2E0(1, 1, 16).to(device)
 
     if torch.cuda.device_count() > 1:
-        print(f"Using {torch.cuda.device_count()} GPUs")
+        print(f"Using {torch.cuda.device_count()} GPUs", flush=True)
         model = nn.DataParallel(model)
 
     if optimizer_type == 'adamw':
@@ -92,7 +92,7 @@ def train():
     best_rpa = 0.0
 
     if should_resume:
-        print(f"Resuming from {resume_path}")
+        print(f"Resuming from {resume_path}", flush=True)
         ckpt = torch.load(resume_path, map_location=torch.device(device), weights_only=False)
         
         state_dict = ckpt['model']
@@ -156,7 +156,7 @@ def train():
         # print каждые print_interval итераций
         if i % print_interval == 0:
             lr = optimizer.param_groups[0]['lr']
-            print(f"Iter {i}/{iterations} | Loss: {loss.item():.6f} | LR: {lr:.2e}")
+            print(f"Iter {i}/{iterations} | Loss: {loss.item():.6f} | LR: {lr:.2e}", flush=True)
 
         if i % validation_interval == 0:
             model.eval()
@@ -173,7 +173,7 @@ def train():
                 
                 RPA, RCA, OA, VR, VFA = rpa, rca, oa, vr, vfa
                 
-                print(f"=== Validation @ {i} | RPA: {rpa:.4f} | RCA: {rca:.4f} | OA: {oa:.4f} ===")
+                print(f"=== Validation @ {i} | RPA: {rpa:.4f} | RCA: {rca:.4f} | OA: {oa:.4f} ===", flush=True)
                 
                 with open(os.path.join(logdir, 'result.txt'), 'a') as f:
                     f.write(str(i) + '\t')
@@ -187,7 +187,7 @@ def train():
                 if rpa >= best_rpa:
                     best_rpa = rpa
                     is_best = True
-                    print(f'New best model at {i}!')
+                    print(f'New best model at {i}!', flush=True)
 
                 model_to_save = model.module if isinstance(model, nn.DataParallel) else model
                 checkpoint_dict = {
@@ -206,14 +206,11 @@ def train():
                 
             model.train()
 
-    print("Training finished.")
+    print("Training finished.", flush=True)
     writer.close()
 
 if __name__ == '__main__':
     try:
         train()
-    except KeyboardInterrupt:
-        print("Interrupted by user.")
-    finally:
-        print("Exiting...")
-        sys.exit(0)
+    except Exception as e:
+        print(e)
