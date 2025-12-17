@@ -40,7 +40,6 @@ def train():
     learning_rate = 5e-4
     batch_size = 16
     validation_interval = 2000
-    print_interval = 100
     log_interval = 10
     clip_grad_norm = 3
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -153,8 +152,8 @@ def train():
         if i % log_interval == 0:
             writer.add_scalar('loss/loss_pitch', loss.item(), global_step=i)
 
-        # print каждые print_interval итераций
-        if i % print_interval == 0:
+        # print каждые log_interval итераций
+        if i % log_interval == 0:
             lr = optimizer.param_groups[0]['lr']
             print(f"Iter {i}/{iterations} | Loss: {loss.item():.6f} | LR: {lr:.2e}", flush=True)
 
