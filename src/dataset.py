@@ -86,7 +86,7 @@ class HYBRID(Dataset):
         end_frame = n if self.whole_audio else start_frame + 128
         
         if self.use_aug:
-            key_shift = random.uniform(0, 5)
+            key_shift = random.uniform(-5, 5)
         else:
             key_shift = 0
         factor = 2 ** (key_shift / 12)
