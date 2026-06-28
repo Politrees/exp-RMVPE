@@ -55,7 +55,7 @@ def evaluate(dataset, model, hop_length, device, pitch_th=0.03):
         freq_pred = np.array([10 * (2 ** (cent_pred / 1200)) if cent_pred else 0 for cent_pred in cents_pred])
         freq = np.array([10 * (2 ** (cent / 1200)) if cent else 0 for cent in cents_label])
 
-        time_slice = np.array([i*hop_length*1000/SAMPLE_RATE for i in range(len(cents_label))])
+        time_slice = np.arange(len(cents_label)) * hop_length / SAMPLE_RATE
         ref_v, ref_c, est_v, est_c = to_cent_voicing(time_slice, freq, time_slice, freq_pred)
 
         rpa = raw_pitch_accuracy(ref_v, ref_c, est_v, est_c)

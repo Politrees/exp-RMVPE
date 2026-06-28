@@ -11,7 +11,7 @@ import numpy as np
 from src.model import E2E0
 from src.utils import summary, cycle
 from src.loss import bce
-from src.dataset import HYBRID
+from src.dataset import HybridPitchDataset
 from evaluate import evaluate
 
 now_dir = os.getcwd()
@@ -45,8 +45,8 @@ def train():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     only_latest = False
 
-    train_dataset = HYBRID('/content/drive/MyDrive/dataset', hop_length, ['train'], whole_audio=False, use_aug=True)
-    validation_dataset = HYBRID('/content/drive/MyDrive/dataset', hop_length, ['test'], whole_audio=True, use_aug=False)
+    train_dataset = HybridPitchDataset('/content/drive/MyDrive/dataset', hop_length, ['train'], whole_audio=False, use_aug=True)
+    validation_dataset = HybridPitchDataset('/content/drive/MyDrive/dataset', hop_length, ['test'], whole_audio=True, use_aug=False)
 
     data_loader = DataLoader(train_dataset, batch_size, shuffle=True, drop_last=True, pin_memory=True, persistent_workers=True, num_workers=2)
     

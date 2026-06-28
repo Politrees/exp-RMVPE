@@ -437,7 +437,7 @@ class DatasetPreparer:
         pv_path = os.path.join(output_dir, f"{name}.pv")
         with open(pv_path, 'w') as f:
             for midi in midi_values:
-                f.write(f"{midi:.6f}\n")
+                f.write(f"{midi:.8f}\n")
 
     def prepare_dataset(
         self,
