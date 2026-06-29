@@ -151,10 +151,8 @@ class HybridPitchDataset(Dataset):
 
         if self.use_aug:
             key_shift = random.uniform(*self.key_shift_range)
-            speed = random.uniform(0.9, 1.1)
         else:
             key_shift = 0.0
-            speed = 1.0
 
         factor = 2 ** (key_shift / 12.0)
         win_length_new = max(16, int(np.round(WINDOW_LENGTH * factor)))
@@ -193,7 +191,7 @@ class HybridPitchDataset(Dataset):
             audio_aug = aud + (noise[start_id:end_id] if isinstance(noise, torch.Tensor) else 0)
 
         audio_aug = torch.clamp(audio_aug, -1.0, 1.0)
-        mel = self.mel(audio_aug.unsqueeze(0), keyshift=key_shift, speed=speed, center=False).squeeze(0)
+        mel = self.mel(audio_aug.unsqueeze(0), keyshift=key_shift, center=False).squeeze(0)
 
         c = cent[start_frame:end_frame].clone()
         v = voice[start_frame:end_frame].clone()
