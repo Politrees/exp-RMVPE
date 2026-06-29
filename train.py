@@ -162,6 +162,8 @@ def train(model_name, batch_size):
             writer.add_scalar('loss/loss_pitch', loss.item(), global_step=i)
             lr = optimizer.param_groups[0]['lr']
             writer.add_scalar('train/lr', lr, global_step=i)
+            writer.flush()
+
             print(f"Iter {i}/{iterations} | Loss: {loss.item():.6f} | LR: {lr:.2e}", flush=True)
 
         if i % validation_interval == 0:
@@ -173,6 +175,8 @@ def train(model_name, batch_size):
 
                 for key, value in metrics.items():
                     writer.add_scalar(f'stage_pitch/{key}', np.mean(value), global_step=i)
+
+                writer.flush()
 
                 rpa = np.mean(metrics['RPA'])
                 rca = np.mean(metrics['RCA'])
