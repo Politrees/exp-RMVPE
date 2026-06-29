@@ -82,7 +82,7 @@ def train(model_name, batch_size):
 
     writer = SummaryWriter(tb_dir)
 
-    model = E2E0(2, 1, 16).to(device)
+    model = E2E0(1, 1, 16).to(device)
 
     if torch.cuda.device_count() > 1:
         print(f"Using {torch.cuda.device_count()} GPUs", flush=True)
