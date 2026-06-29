@@ -147,7 +147,26 @@ def train(model_name, batch_size):
         pitch_label = data['pitch'].to(device)
 
         pitch_pred = model(mel)
+
+        if pitch_pred.shape != pitch_label.shape:
+            raise RuntimeError(
+                "Shape mismatch between prediction and label: "
+                f"pitch_pred.shape={tuple(pitch_pred.shape)}, "
+                f"pitch_label.shape={tuple(pitch_label.shape)}, "
+                f"mel.shape={tuple(mel.shape)}"
+            )
+
         loss = bce(pitch_pred, pitch_label)
+
+        if not torch.isfinite(loss):
+            raise RuntimeError(
+                "Non-finite loss detected: "
+                f"loss={loss.item()}, "
+                f"pitch_pred_min={pitch_pred.detach().min().item()}, "
+                f"pitch_pred_max={pitch_pred.detach().max().item()}, "
+                f"pitch_label_min={pitch_label.detach().min().item()}, "
+                f"pitch_label_max={pitch_label.detach().max().item()}"
+            )
 
         optimizer.zero_grad()
         loss.backward()
@@ -178,11 +197,11 @@ def train(model_name, batch_size):
 
                 writer.flush()
 
-                rpa = np.mean(metrics['RPA'])
-                rca = np.mean(metrics['RCA'])
-                oa = np.mean(metrics['OA'])
-                vr = np.mean(metrics['VR'])
-                vfa = np.mean(metrics['VFA'])
+                rpa = float(np.mean(metrics['RPA']))
+                rca = float(np.mean(metrics['RCA']))
+                oa = float(np.mean(metrics['OA']))
+                vr = float(np.mean(metrics['VR']))
+                vfa = float(np.mean(metrics['VFA']))
 
                 RPA, RCA, OA, VR, VFA = rpa, rca, oa, vr, vfa
 

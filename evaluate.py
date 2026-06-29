@@ -9,6 +9,7 @@ from mir_eval.melody import raw_pitch_accuracy, to_cent_voicing, raw_chroma_accu
 from mir_eval.melody import voicing_recall, voicing_false_alarm
 
 
+@torch.inference_mode()
 def evaluate(dataset, model, hop_length, device, pitch_th=0.03):
     metrics = defaultdict(list)
     for data in dataset:
