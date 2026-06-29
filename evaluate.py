@@ -45,10 +45,10 @@ def evaluate(dataset, model, hop_length, device, pitch_th=0.03):
         loss = bce(pitch_pred, pitch_label)
         metrics['loss'].append(loss.item())
 
-        cents_pred = to_local_average_cents(pitch_pred.cpu().numpy(), None, pitch_th)
+        cents_pred = to_local_average_cents(pitch_pred.detach().cpu().numpy(), None, pitch_th)
         # cents_pred = to_viterbi_cents(pitch_pred.cpu().numpy())
         # print()
-        cents_label = to_local_average_cents(pitch_label.cpu().numpy(), None, pitch_th)
+        cents_label = to_local_average_cents(pitch_label.detach().cpu().numpy(), None, pitch_th)
         # cents_label = to_viterbi_cents(pitch_label.cpu().numpy())
         # print()
 
