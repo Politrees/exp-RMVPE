@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import argparse
+import traceback
 
 import torch
 import numpy as np
@@ -229,5 +230,10 @@ if __name__ == '__main__':
 
     try:
         train(args.name, args.batch_size)
-    except Exception as e:
-        print(e, flush=True)
+    except KeyboardInterrupt:
+        print("Training interrupted by user.", flush=True)
+        raise
+    except Exception:
+        print("Training failed with exception:", flush=True)
+        traceback.print_exc()
+        raise
