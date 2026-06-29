@@ -7,7 +7,7 @@ import torch
 import numpy as np
 from torch import nn
 from torch.nn.utils import clip_grad_norm_
-from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
@@ -51,6 +51,7 @@ def train(model_name, batch_size):
     hop_length = 160
     optimizer_type = 'adam'
     learning_rate = 5e-4
+    iterations = 100000
     validation_interval = 1000
     log_interval = 50
     clip_grad_norm_value = 3
@@ -61,11 +62,6 @@ def train(model_name, batch_size):
     validation_dataset = HybridPitchDataset('/content/drive/MyDrive/dataset', hop_length, ['test'], whole_audio=True, use_aug=False)
 
     data_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, pin_memory=True, persistent_workers=True, num_workers=2)
-
-    iterations = 100000
-    learning_rate_decay_steps = 2000
-    warmup_steps = int(len(data_loader) * 3)
-    learning_rate_decay_rate = 0.99
 
     resume_path = None
     if only_latest:
@@ -97,7 +93,7 @@ def train(model_name, batch_size):
     else:
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
-    scheduler = StepLR(optimizer, step_size=learning_rate_decay_steps, gamma=learning_rate_decay_rate)
+    scheduler = CosineAnnealingLR(optimizer, T_max=iterations, eta_min=1e-6)
 
     best_rpa = 0.0
 
@@ -138,18 +134,14 @@ def train(model_name, batch_size):
     if not isinstance(model, nn.DataParallel):
         summary(model)
 
+    print(f"Обучение: {resume_iteration} → {iterations} итераций", flush=True)
+    print(f"Начальный LR: {optimizer.param_groups[0]['lr']:.2e}", flush=True)
+
     RPA, RCA, OA, VFA, VR = 0, 0, 0, 0, 0
 
     model.train()
 
     for i, data in zip(range(resume_iteration + 1, iterations + 1), cycle(data_loader)):
-        if i <= warmup_steps:
-            warmup_factor = float(i) / float(warmup_steps)
-            warmup_factor = max(warmup_factor, 1e-6)
-
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = learning_rate * warmup_factor
-
         mel = data['mel'].to(device)
         pitch_label = data['pitch'].to(device)
 
@@ -163,13 +155,12 @@ def train(model_name, batch_size):
             clip_grad_norm_(model.parameters(), clip_grad_norm_value)
 
         optimizer.step()
-
-        if i > warmup_steps:
-            scheduler.step()
+        scheduler.step()
 
         if i % log_interval == 0:
             writer.add_scalar('loss/loss_pitch', loss.item(), global_step=i)
             lr = optimizer.param_groups[0]['lr']
+            writer.add_scalar('train/lr', lr, global_step=i)
             print(f"Iter {i}/{iterations} | Loss: {loss.item():.6f} | LR: {lr:.2e}", flush=True)
 
         if i % validation_interval == 0:
@@ -232,9 +223,9 @@ def train(model_name, batch_size):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', type=str, required=True)
-    parser.add_argument('--batch_size', type=str, required=True)
+    parser.add_argument('--batch_size', type=int, required=True)
 
-    args = parser.parse_args()
+    args = argparse.parse_args()
 
     try:
         train(args.name, args.batch_size)
