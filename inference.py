@@ -128,24 +128,30 @@ class HPARMVPE:
             salience (np.ndarray): Salience values.
             thred (float, optional): Threshold for salience. Defaults to 0.05.
         """
+        if salience.ndim != 2:
+            raise ValueError(f"salience must be 2D [T, N_CLASS], got shape={salience.shape}")
+
         center = np.argmax(salience, axis=1)
-        salience = np.pad(salience, ((0, 0), (4, 4)))
-        center += 4
-        todo_salience = []
-        todo_cents_mapping = []
-        starts = center - 4
-        ends = center + 5
-        for idx in range(salience.shape[0]):
-            todo_salience.append(salience[:, starts[idx]:ends[idx]][idx])
-            todo_cents_mapping.append(self.cents_mapping[starts[idx]:ends[idx]])
-        todo_salience = np.array(todo_salience)
-        todo_cents_mapping = np.array(todo_cents_mapping)
-        product_sum = np.sum(todo_salience * todo_cents_mapping, 1)
-        weight_sum = np.sum(todo_salience, 1)
-        devided = product_sum / weight_sum
-        maxx = np.max(salience, axis=1)
-        devided[maxx <= thred] = 0
-        return devided
+        salience_padded = np.pad(salience, ((0, 0), (4, 4)))
+        center = center + 4
+
+        offsets = np.arange(-4, 5)
+        idx = center[:, None] + offsets[None, :]
+
+        local_salience = salience_padded[np.arange(salience.shape[0])[:, None], idx]
+        local_cents = self.cents_mapping[idx]
+
+        product_sum = np.sum(local_salience * local_cents, axis=1)
+        weight_sum = np.sum(local_salience, axis=1)
+
+        cents = np.zeros_like(product_sum, dtype=np.float64)
+        valid = weight_sum > 1e-12
+        cents[valid] = product_sum[valid] / weight_sum[valid]
+
+        max_salience = np.max(salience, axis=1)
+        cents[max_salience <= thred] = 0.0
+
+        return cents
 
 
 if __name__ == "__main__":

@@ -64,24 +64,32 @@ def to_local_average_cents(salience, center=None, thred=0.03):
     find the weighted average cents near the argmax bin
     """
 
-    if not hasattr(to_local_average_cents, 'cents_mapping'):
-        # the bin number-to-cents mapping
-        to_local_average_cents.cents_mapping = (
-                20 * np.arange(N_CLASS) + CONST)
+    if not hasattr(to_local_average_cents, "cents_mapping"):
+        to_local_average_cents.cents_mapping = 20 * np.arange(N_CLASS) + CONST
 
     if salience.ndim == 1:
         if center is None:
             center = int(np.argmax(salience))
+
         start = max(0, center - 4)
         end = min(len(salience), center + 5)
-        salience = salience[start:end]
-        product_sum = np.sum(
-            salience * to_local_average_cents.cents_mapping[start:end])
-        weight_sum = np.sum(salience)
-        return product_sum / weight_sum if np.max(salience) > thred else 0
+
+        local_salience = salience[start:end]
+        local_cents = to_local_average_cents.cents_mapping[start:end]
+
+        max_salience = np.max(local_salience) if len(local_salience) else 0.0
+        if max_salience <= thred:
+            return 0.0
+
+        weight_sum = np.sum(local_salience)
+        if weight_sum <= 1e-12:
+            return 0.0
+
+        product_sum = np.sum(local_salience * local_cents)
+        return product_sum / weight_sum
+
     if salience.ndim == 2:
-        return np.array([to_local_average_cents(salience[i, :], None, thred) for i in
-                         range(salience.shape[0])])
+        return np.array([to_local_average_cents(salience[i, :], None, thred) for i in range(salience.shape[0])])
 
     raise Exception("label should be either 1d or 2d ndarray")
     

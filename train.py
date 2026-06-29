@@ -49,7 +49,7 @@ def train(model_name, batch_size):
     os.makedirs(tb_dir, exist_ok=True)
 
     hop_length = 160
-    optimizer_type = 'adam'
+    optimizer_type = 'adamw'
     learning_rate = 5e-4
     iterations = 100000
     validation_interval = 1000

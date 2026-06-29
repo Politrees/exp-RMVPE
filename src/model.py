@@ -21,13 +21,13 @@ class E2E0(nn.Module):
             self.fc = nn.Sequential(
                 BiGRU(3 * N_MELS, 256, n_gru),
                 nn.Linear(512, N_CLASS),
-                nn.Dropout(0.1),
+                nn.Dropout(0.25),
                 nn.Sigmoid()
             )
         else:
             self.fc = nn.Sequential(
                 nn.Linear(3 * N_MELS, N_CLASS),
-                nn.Dropout(0.1),
+                nn.Dropout(0.25),
                 nn.Sigmoid()
             )
 

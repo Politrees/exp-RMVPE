@@ -43,8 +43,8 @@ class SilenceSlicer:
         sr: int = 16000,
         silence_threshold_db: float = -40.0,
         min_silence_duration: float = 0.25,  # минимум 250мс тишины для разреза
-        min_segment_duration: float = 1.0,   # минимальная длина сегмента
-        max_segment_duration: float = 10.0,  # максимальная длина сегмента
+        min_segment_duration: float = 5.0,   # минимальная длина сегмента
+        max_segment_duration: float = 15.0,  # максимальная длина сегмента
         padding: float = 0.05,               # 50мс "подушка" с каждой стороны от точки разреза
         frame_length: int = 2048,
         hop_length: int = 512,
@@ -431,12 +431,28 @@ class DatasetPreparer:
         midi_values: np.ndarray,
     ):
         """Сохранение сегмента в формате MIR-1K."""
+        audio = np.asarray(audio, dtype=np.float32)
+        audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
+        audio = np.clip(audio, -1.0, 1.0)
+
+        midi_values = np.asarray(midi_values, dtype=np.float32)
+        midi_values = np.nan_to_num(midi_values, nan=0.0, posinf=0.0, neginf=0.0)
+
+        target_frames = len(audio) // self.hop_length + 1
+
+        if len(midi_values) > target_frames:
+            midi_values = midi_values[:target_frames]
+        elif len(midi_values) < target_frames:
+            midi_values = np.pad(midi_values, (0, target_frames - len(midi_values)), mode="constant")
+
         wav_path = os.path.join(output_dir, f"{name}_m.wav")
         sf.write(wav_path, audio, SAMPLE_RATE)
-        
+
         pv_path = os.path.join(output_dir, f"{name}.pv")
-        with open(pv_path, 'w') as f:
+        with open(pv_path, "w", encoding="utf-8") as f:
             for midi in midi_values:
+                if midi < 0:
+                    midi = 0.0
                 f.write(f"{midi:.8f}\n")
 
     def prepare_dataset(

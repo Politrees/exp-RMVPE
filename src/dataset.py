@@ -46,7 +46,7 @@ class HybridPitchDataset(Dataset):
         groups: Optional[Iterable[str]] = None,
         whole_audio: bool = False,
         use_aug: bool = True,
-        segment_frames: int = 128,
+        segment_frames: int = 256,
         min_frames: Optional[int] = None,
         label_unit: str = "auto",  # auto | midi | hz | cent
         key_shift_range: Tuple[float, float] = (-5.0, 5.0),
@@ -192,6 +192,12 @@ class HybridPitchDataset(Dataset):
 
         audio_aug = torch.clamp(audio_aug, -1.0, 1.0)
         mel = self.mel(audio_aug.unsqueeze(0), keyshift=key_shift, center=False).squeeze(0)
+
+        target_frames = end_frame - start_frame
+        if mel.shape[-1] > target_frames:
+            mel = mel[:, :target_frames]
+        elif mel.shape[-1] < target_frames:
+            mel = F.pad(mel, (0, target_frames - mel.shape[-1]), mode="constant", value=0.0)
 
         c = cent[start_frame:end_frame].clone()
         v = voice[start_frame:end_frame].clone()
