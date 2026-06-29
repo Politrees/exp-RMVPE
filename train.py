@@ -36,7 +36,7 @@ def find_latest_iteration(checkpoint_dir):
     return max(iterations) if iterations else None
 
 
-def train(model_name):
+def train(model_name, batch_size):
     print("Начало обучения модели:", model_name, flush=True)
 
     base_dir = '/content/drive/MyDrive/RMPVE'
@@ -51,9 +51,8 @@ def train(model_name):
     hop_length = 160
     optimizer_type = 'adam'
     learning_rate = 5e-4
-    batch_size = 128
     validation_interval = 1000
-    log_interval = 10
+    log_interval = 50
     clip_grad_norm_value = 3
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     only_latest = False
@@ -232,10 +231,12 @@ def train(model_name):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', type=str, required=True, help='Имя модели')
+    parser.add_argument('--name', type=str, required=True)
+    parser.add_argument('--batch_size', type=str, required=True)
+
     args = parser.parse_args()
 
     try:
-        train(args.name)
+        train(args.name, args.batch_size)
     except Exception as e:
         print(e, flush=True)
