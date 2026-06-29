@@ -51,8 +51,8 @@ def train(model_name):
     hop_length = 160
     optimizer_type = 'adam'
     learning_rate = 5e-4
-    batch_size = 32
-    validation_interval = 2000
+    batch_size = 128
+    validation_interval = 1000
     log_interval = 10
     clip_grad_norm_value = 3
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -63,7 +63,7 @@ def train(model_name):
 
     data_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, pin_memory=True, persistent_workers=True, num_workers=2)
 
-    iterations = 200000
+    iterations = 100000
     learning_rate_decay_steps = 2000
     warmup_steps = int(len(data_loader) * 3)
     learning_rate_decay_rate = 0.99
