@@ -4,6 +4,9 @@ import sys
 import argparse
 import traceback
 
+import datetime
+from time import time as ttime
+
 import torch
 import numpy as np
 from torch import nn
@@ -20,6 +23,17 @@ from evaluate import evaluate
 
 now_dir = os.getcwd()
 sys.path.append(now_dir)
+
+
+class IterRecorder:
+    def __init__(self):
+        self.last_time = ttime()
+
+    def record(self):
+        now_time = ttime()
+        elapsed_time = round(now_time - self.last_time, 1)
+        self.last_time = now_time
+        return f"[{str(datetime.timedelta(seconds=int(elapsed_time)))}]"
 
 
 def find_latest_iteration(checkpoint_dir):
@@ -140,6 +154,7 @@ def train(model_name, batch_size):
 
     RPA, RCA, OA, VFA, VR = 0, 0, 0, 0, 0
 
+    iterrec = IterRecorder()
     model.train()
 
     for i, data in zip(range(resume_iteration + 1, iterations + 1), cycle(data_loader)):
@@ -183,7 +198,7 @@ def train(model_name, batch_size):
             writer.add_scalar('train/lr', lr, global_step=i)
             writer.flush()
 
-            print(f"Iter {i}/{iterations} | Loss: {loss.item():.6f} | LR: {lr:.2e}", flush=True)
+            print(f"{iterrec.record()}: Iter {i}/{iterations} | Loss: {loss.item():.6f} | LR: {lr:.2e}", flush=True)
 
         if i % validation_interval == 0:
             model.eval()
