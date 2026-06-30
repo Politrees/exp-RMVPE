@@ -118,8 +118,6 @@ def train(
     iterations=100000,
     validation_interval=1000,
     num_workers=2,
-    early_stop_patience=0,
-    early_stop_min_delta=0.0,
     save_all_validations=False,
 ):
     print("Начало обучения модели:", model_name, flush=True)
@@ -161,12 +159,14 @@ def train(
     resume_path = None
     if latest_iter is not None:
         candidates = [
-            os.path.join(checkpoint_dir, f) for f in os.listdir(checkpoint_dir)
+            os.path.join(checkpoint_dir, f)
+            for f in os.listdir(checkpoint_dir)
             if f.startswith((f"model_step_{latest_iter:07d}", f"model_{latest_iter}")) and f.endswith(".pt")
         ]
         if candidates:
             candidates = sorted(candidates)
             resume_path = candidates[-1]
+
     latest_path = os.path.join(checkpoint_dir, "model_latest.pt")
     if resume_path is None and os.path.exists(latest_path):
         resume_path = latest_path
@@ -191,7 +191,6 @@ def train(
 
     best_hm = 0.0
     best_rpa = 0.0
-    no_improve_evals = 0
 
     if should_resume:
         print(f"Resuming from {resume_path}", flush=True)
@@ -227,19 +226,13 @@ def train(
         resume_iteration = ckpt.get("iteration", 0)
         best_hm = ckpt.get("best_hm", ckpt.get("best_rpa", 0.0))
         best_rpa = ckpt.get("best_rpa", 0.0)
-        no_improve_evals = ckpt.get("no_improve_evals", 0)
 
     if not isinstance(model, nn.DataParallel):
         summary(model)
 
     print(f"Обучение: {resume_iteration} → {iterations} итераций", flush=True)
     print(f"Начальный LR: {optimizer.param_groups[0]['lr']:.2e}", flush=True)
-    if early_stop_patience > 0:
-        print(
-            f"Early stopping включен: patience={early_stop_patience} validation(s), "
-            f"min_delta={early_stop_min_delta}",
-            flush=True,
-        )
+    print(f"save_all_validations={'ON' if save_all_validations else 'OFF'}", flush=True)
 
     iterrec = IterRecorder()
     model.train()
@@ -304,23 +297,15 @@ def train(
                 lr = optimizer.param_groups[0]["lr"]
                 hm = summary_metrics.get("HM", 0.0)
                 rpa = summary_metrics.get("RPA", 0.0)
-                improved = hm > (best_hm + early_stop_min_delta)
+                is_best = hm >= best_hm
 
-                if improved:
+                if is_best:
                     best_hm = hm
                     best_rpa = max(best_rpa, rpa)
-                    no_improve_evals = 0
-                else:
-                    no_improve_evals += 1
 
                 print(format_validation_line(i, summary_metrics, best_hm, lr), flush=True)
-                if improved:
+                if is_best:
                     print(f"New best model at step {i}! (HM={hm:.4f})", flush=True)
-                elif early_stop_patience > 0:
-                    print(
-                        f"No improvement for {no_improve_evals}/{early_stop_patience} validation(s)",
-                        flush=True,
-                    )
 
                 with open(result_path, "a", encoding="utf-8") as f:
                     f.write(
@@ -341,7 +326,7 @@ def train(
                         f"{summary_metrics.get('GrossError', 0.0)}\n"
                     )
 
-                payload = build_eval_payload(i, summary_metrics, lr, improved, best_hm)
+                payload = build_eval_payload(i, summary_metrics, lr, is_best, best_hm)
                 json_dump(summary_last_path, payload)
                 append_jsonl(history_jsonl_path, payload)
 
@@ -353,7 +338,6 @@ def train(
                     "scheduler": scheduler.state_dict(),
                     "best_hm": best_hm,
                     "best_rpa": best_rpa,
-                    "no_improve_evals": no_improve_evals,
                 }
 
                 torch.save(checkpoint_dict, latest_path)
@@ -364,7 +348,7 @@ def train(
                         os.path.join(checkpoint_dir, checkpoint_filename(i, hm, rpa)),
                     )
 
-                if improved:
+                if is_best:
                     torch.save(checkpoint_dict, os.path.join(checkpoint_dir, "model_best.pt"))
                     json_dump(summary_best_path, payload)
 
@@ -375,9 +359,6 @@ def train(
                     "latest_iteration": int(i),
                     "best_hm": float(best_hm),
                     "best_rpa": float(best_rpa),
-                    "no_improve_evals": int(no_improve_evals),
-                    "early_stop_patience": int(early_stop_patience),
-                    "early_stop_min_delta": float(early_stop_min_delta),
                     "save_all_validations": bool(save_all_validations),
                     "last_eval_summary_path": summary_last_path,
                     "best_eval_summary_path": summary_best_path,
@@ -388,13 +369,6 @@ def train(
                 json_dump(train_state_path, train_state_payload)
 
             model.train()
-
-            if early_stop_patience > 0 and no_improve_evals >= early_stop_patience:
-                print(
-                    f"Early stopping triggered: no HM improvement for {no_improve_evals} validation(s).",
-                    flush=True,
-                )
-                break
 
     print("Training finished.", flush=True)
     writer.close()
@@ -409,8 +383,6 @@ if __name__ == "__main__":
     parser.add_argument("--iterations", type=int, default=100000)
     parser.add_argument("--validation_interval", type=int, default=1000)
     parser.add_argument("--num_workers", type=int, default=2)
-    parser.add_argument("--early_stop_patience", type=int, default=0, help="0 = отключено; иначе число validation-проверок без улучшения HM")
-    parser.add_argument("--early_stop_min_delta", type=float, default=0.0, help="Минимальный прирост HM, чтобы считать это улучшением")
     parser.add_argument("--save_all_validations", action="store_true", help="Сохранять отдельный checkpoint на каждой validation")
 
     args = parser.parse_args()
@@ -424,8 +396,6 @@ if __name__ == "__main__":
             iterations=args.iterations,
             validation_interval=args.validation_interval,
             num_workers=args.num_workers,
-            early_stop_patience=args.early_stop_patience,
-            early_stop_min_delta=args.early_stop_min_delta,
             save_all_validations=args.save_all_validations,
         )
     except KeyboardInterrupt:
