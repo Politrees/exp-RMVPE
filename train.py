@@ -1,6 +1,7 @@
 import os
 import re
 import sys
+import json
 import argparse
 import traceback
 import datetime
@@ -42,7 +43,7 @@ def find_latest_iteration(checkpoint_dir):
     model_files = [f for f in os.listdir(checkpoint_dir) if f.startswith("model_") and f.endswith(".pt")]
     iterations = []
     for f in model_files:
-        match = re.search(r"model_(\d+)\.pt", f)
+        match = re.search(r"(?:model_|model_step_)(\d+)", f)
         if match:
             iterations.append(int(match.group(1)))
 
@@ -69,6 +70,46 @@ def ensure_result_header(result_path: str):
         )
 
 
+def json_dump(path: str, payload: dict):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+def append_jsonl(path: str, payload: dict):
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def checkpoint_filename(iteration: int, hm: float, rpa: float) -> str:
+    return f"model_step_{iteration:07d}_hm{hm:.4f}_rpa{rpa:.4f}.pt"
+
+
+def format_validation_line(iteration: int, summary_metrics: dict, best_hm: float, lr: float) -> str:
+    hm = summary_metrics.get("HM", 0.0)
+    rpa = summary_metrics.get("RPA", 0.0)
+    f1 = summary_metrics.get("F1", 0.0)
+    ca = summary_metrics.get("CA", 0.0)
+    oa = summary_metrics.get("OA", 0.0)
+    cents_error = summary_metrics.get("CentsError", 0.0)
+    rmse_hz = summary_metrics.get("RMSE_Hz", 0.0)
+    return (
+        f"[VAL] step={iteration} | HM={hm:.4f} | RPA={rpa:.4f} | F1={f1:.4f} | "
+        f"CA={ca:.4f} | OA={oa:.4f} | CentsErr={cents_error:.2f} | RMSE={rmse_hz:.2f}Hz | "
+        f"best_HM={best_hm:.4f} | lr={lr:.2e}"
+    )
+
+
+def build_eval_payload(iteration: int, summary_metrics: dict, lr: float, is_best: bool, best_hm: float) -> dict:
+    return {
+        "iteration": int(iteration),
+        "timestamp_local": datetime.datetime.now().isoformat(timespec="seconds"),
+        "learning_rate": float(lr),
+        "is_best": bool(is_best),
+        "best_hm_after_eval": float(best_hm),
+        "metrics": {k: float(v) for k, v in summary_metrics.items()},
+    }
+
+
 def train(
     model_name,
     batch_size,
@@ -77,6 +118,9 @@ def train(
     iterations=100000,
     validation_interval=1000,
     num_workers=2,
+    early_stop_patience=0,
+    early_stop_min_delta=0.0,
+    save_all_validations=False,
 ):
     print("Начало обучения модели:", model_name, flush=True)
 
@@ -84,6 +128,10 @@ def train(
     checkpoint_dir = os.path.join(experiment_dir, "checkpoints")
     tb_dir = os.path.join(experiment_dir, "tb")
     result_path = os.path.join(experiment_dir, "result.txt")
+    summary_last_path = os.path.join(experiment_dir, "last_eval_summary.json")
+    summary_best_path = os.path.join(experiment_dir, "best_eval_summary.json")
+    history_jsonl_path = os.path.join(experiment_dir, "eval_history.jsonl")
+    train_state_path = os.path.join(experiment_dir, "train_state.json")
 
     os.makedirs(checkpoint_dir, exist_ok=True)
     os.makedirs(tb_dir, exist_ok=True)
@@ -95,7 +143,6 @@ def train(
     log_interval = 50
     clip_grad_norm_value = 3
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    only_latest = False
 
     train_dataset = HybridPitchDataset(dataset_dir, hop_length, ["train"], whole_audio=False, use_aug=True)
     validation_dataset = HybridPitchDataset(dataset_dir, hop_length, ["test"], whole_audio=True, use_aug=False)
@@ -110,19 +157,19 @@ def train(
         num_workers=num_workers,
     )
 
+    latest_iter = find_latest_iteration(checkpoint_dir)
     resume_path = None
-    if only_latest:
-        potential_path = os.path.join(checkpoint_dir, "model_latest.pt")
-        if os.path.exists(potential_path):
-            resume_path = potential_path
-    else:
-        latest_iter = find_latest_iteration(checkpoint_dir)
-        if latest_iter is not None:
-            resume_path = os.path.join(checkpoint_dir, f"model_{latest_iter}.pt")
-        else:
-            latest_path = os.path.join(checkpoint_dir, "model_latest.pt")
-            if os.path.exists(latest_path):
-                resume_path = latest_path
+    if latest_iter is not None:
+        candidates = [
+            os.path.join(checkpoint_dir, f) for f in os.listdir(checkpoint_dir)
+            if f.startswith((f"model_step_{latest_iter:07d}", f"model_{latest_iter}")) and f.endswith(".pt")
+        ]
+        if candidates:
+            candidates = sorted(candidates)
+            resume_path = candidates[-1]
+    latest_path = os.path.join(checkpoint_dir, "model_latest.pt")
+    if resume_path is None and os.path.exists(latest_path):
+        resume_path = latest_path
 
     should_resume = resume_path is not None and os.path.exists(resume_path)
     resume_iteration = 0
@@ -144,6 +191,7 @@ def train(
 
     best_hm = 0.0
     best_rpa = 0.0
+    no_improve_evals = 0
 
     if should_resume:
         print(f"Resuming from {resume_path}", flush=True)
@@ -179,12 +227,19 @@ def train(
         resume_iteration = ckpt.get("iteration", 0)
         best_hm = ckpt.get("best_hm", ckpt.get("best_rpa", 0.0))
         best_rpa = ckpt.get("best_rpa", 0.0)
+        no_improve_evals = ckpt.get("no_improve_evals", 0)
 
     if not isinstance(model, nn.DataParallel):
         summary(model)
 
     print(f"Обучение: {resume_iteration} → {iterations} итераций", flush=True)
     print(f"Начальный LR: {optimizer.param_groups[0]['lr']:.2e}", flush=True)
+    if early_stop_patience > 0:
+        print(
+            f"Early stopping включен: patience={early_stop_patience} validation(s), "
+            f"min_delta={early_stop_min_delta}",
+            flush=True,
+        )
 
     iterrec = IterRecorder()
     model.train()
@@ -229,8 +284,10 @@ def train(
             lr = optimizer.param_groups[0]["lr"]
             writer.add_scalar("train/lr", lr, global_step=i)
             writer.flush()
-
-            print(f"{iterrec.record()}: Iter {i}/{iterations} | Loss: {loss.item():.6f} | LR: {lr:.2e}", flush=True)
+            print(
+                f"{iterrec.record()} [TRAIN] step={i}/{iterations} | loss={loss.item():.6f} | lr={lr:.2e}",
+                flush=True,
+            )
 
         if i % validation_interval == 0:
             model.eval()
@@ -242,45 +299,51 @@ def train(
 
                 for key, value in summary_metrics.items():
                     writer.add_scalar(f"stage_pitch/{key}", value, global_step=i)
-
                 writer.flush()
 
+                lr = optimizer.param_groups[0]["lr"]
                 hm = summary_metrics.get("HM", 0.0)
                 rpa = summary_metrics.get("RPA", 0.0)
-                rca = summary_metrics.get("RCA", 0.0)
-                oa = summary_metrics.get("OA", 0.0)
-                vr = summary_metrics.get("VR", 0.0)
-                vfa = summary_metrics.get("VFA", 0.0)
-                precision = summary_metrics.get("Precision", 0.0)
-                recall = summary_metrics.get("Recall", 0.0)
-                f1 = summary_metrics.get("F1", 0.0)
-                ca = summary_metrics.get("CA", 0.0)
-                cents_error = summary_metrics.get("CentsError", 0.0)
-                rmse_hz = summary_metrics.get("RMSE_Hz", 0.0)
-                octave_error = summary_metrics.get("OctaveError", 0.0)
-                gross_error = summary_metrics.get("GrossError", 0.0)
+                improved = hm > (best_hm + early_stop_min_delta)
 
-                print(
-                    f"=== Validation @ {i} | "
-                    f"HM: {hm:.4f} | RPA: {rpa:.4f} | F1: {f1:.4f} | "
-                    f"CA: {ca:.4f} | OA: {oa:.4f} ===",
-                    flush=True,
-                )
+                if improved:
+                    best_hm = hm
+                    best_rpa = max(best_rpa, rpa)
+                    no_improve_evals = 0
+                else:
+                    no_improve_evals += 1
+
+                print(format_validation_line(i, summary_metrics, best_hm, lr), flush=True)
+                if improved:
+                    print(f"New best model at step {i}! (HM={hm:.4f})", flush=True)
+                elif early_stop_patience > 0:
+                    print(
+                        f"No improvement for {no_improve_evals}/{early_stop_patience} validation(s)",
+                        flush=True,
+                    )
 
                 with open(result_path, "a", encoding="utf-8") as f:
                     f.write(
                         f"{i}\t"
-                        f"{hm}\t{rpa}\t{rca}\t{oa}\t{vr}\t{vfa}\t"
-                        f"{precision}\t{recall}\t{f1}\t{ca}\t"
-                        f"{cents_error}\t{rmse_hz}\t{octave_error}\t{gross_error}\n"
+                        f"{hm}\t"
+                        f"{summary_metrics.get('RPA', 0.0)}\t"
+                        f"{summary_metrics.get('RCA', 0.0)}\t"
+                        f"{summary_metrics.get('OA', 0.0)}\t"
+                        f"{summary_metrics.get('VR', 0.0)}\t"
+                        f"{summary_metrics.get('VFA', 0.0)}\t"
+                        f"{summary_metrics.get('Precision', 0.0)}\t"
+                        f"{summary_metrics.get('Recall', 0.0)}\t"
+                        f"{summary_metrics.get('F1', 0.0)}\t"
+                        f"{summary_metrics.get('CA', 0.0)}\t"
+                        f"{summary_metrics.get('CentsError', 0.0)}\t"
+                        f"{summary_metrics.get('RMSE_Hz', 0.0)}\t"
+                        f"{summary_metrics.get('OctaveError', 0.0)}\t"
+                        f"{summary_metrics.get('GrossError', 0.0)}\n"
                     )
 
-                is_best = False
-                if hm >= best_hm:
-                    best_hm = hm
-                    best_rpa = max(best_rpa, rpa)
-                    is_best = True
-                    print(f"New best model at {i}! (HM={hm:.4f})", flush=True)
+                payload = build_eval_payload(i, summary_metrics, lr, improved, best_hm)
+                json_dump(summary_last_path, payload)
+                append_jsonl(history_jsonl_path, payload)
 
                 model_to_save = model.module if isinstance(model, nn.DataParallel) else model
                 checkpoint_dict = {
@@ -290,17 +353,48 @@ def train(
                     "scheduler": scheduler.state_dict(),
                     "best_hm": best_hm,
                     "best_rpa": best_rpa,
+                    "no_improve_evals": no_improve_evals,
                 }
 
-                if is_best:
-                    torch.save(checkpoint_dict, os.path.join(checkpoint_dir, "model_best.pt"))
+                torch.save(checkpoint_dict, latest_path)
 
-                if only_latest:
-                    torch.save(checkpoint_dict, os.path.join(checkpoint_dir, "model_latest.pt"))
-                else:
-                    torch.save(checkpoint_dict, os.path.join(checkpoint_dir, f"model_{i}.pt"))
+                if save_all_validations:
+                    torch.save(
+                        checkpoint_dict,
+                        os.path.join(checkpoint_dir, checkpoint_filename(i, hm, rpa)),
+                    )
+
+                if improved:
+                    torch.save(checkpoint_dict, os.path.join(checkpoint_dir, "model_best.pt"))
+                    json_dump(summary_best_path, payload)
+
+                train_state_payload = {
+                    "model_name": model_name,
+                    "dataset_dir": dataset_dir,
+                    "experiment_dir": experiment_dir,
+                    "latest_iteration": int(i),
+                    "best_hm": float(best_hm),
+                    "best_rpa": float(best_rpa),
+                    "no_improve_evals": int(no_improve_evals),
+                    "early_stop_patience": int(early_stop_patience),
+                    "early_stop_min_delta": float(early_stop_min_delta),
+                    "save_all_validations": bool(save_all_validations),
+                    "last_eval_summary_path": summary_last_path,
+                    "best_eval_summary_path": summary_best_path,
+                    "eval_history_jsonl": history_jsonl_path,
+                    "latest_checkpoint": latest_path,
+                    "best_checkpoint": os.path.join(checkpoint_dir, "model_best.pt"),
+                }
+                json_dump(train_state_path, train_state_payload)
 
             model.train()
+
+            if early_stop_patience > 0 and no_improve_evals >= early_stop_patience:
+                print(
+                    f"Early stopping triggered: no HM improvement for {no_improve_evals} validation(s).",
+                    flush=True,
+                )
+                break
 
     print("Training finished.", flush=True)
     writer.close()
@@ -315,6 +409,9 @@ if __name__ == "__main__":
     parser.add_argument("--iterations", type=int, default=100000)
     parser.add_argument("--validation_interval", type=int, default=1000)
     parser.add_argument("--num_workers", type=int, default=2)
+    parser.add_argument("--early_stop_patience", type=int, default=0, help="0 = отключено; иначе число validation-проверок без улучшения HM")
+    parser.add_argument("--early_stop_min_delta", type=float, default=0.0, help="Минимальный прирост HM, чтобы считать это улучшением")
+    parser.add_argument("--save_all_validations", action="store_true", help="Сохранять отдельный checkpoint на каждой validation")
 
     args = parser.parse_args()
 
@@ -327,6 +424,9 @@ if __name__ == "__main__":
             iterations=args.iterations,
             validation_interval=args.validation_interval,
             num_workers=args.num_workers,
+            early_stop_patience=args.early_stop_patience,
+            early_stop_min_delta=args.early_stop_min_delta,
+            save_all_validations=args.save_all_validations,
         )
     except KeyboardInterrupt:
         print("Training interrupted by user.", flush=True)
