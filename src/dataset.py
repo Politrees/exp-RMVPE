@@ -48,7 +48,7 @@ class HybridPitchDataset(Dataset):
         use_aug: bool = True,
         segment_frames: int = 256,
         min_frames: Optional[int] = None,
-        label_unit: str = "auto",  # auto | midi | hz | cent
+        label_unit: str = "auto",
         key_shift_range: Tuple[float, float] = (-5.0, 5.0),
         noise_beta_range: Tuple[float, float] = (0.0, 2.0),
         noise_amp_log10_range: Tuple[float, float] = (-6.0, -1.0),
@@ -123,7 +123,6 @@ class HybridPitchDataset(Dataset):
         if not isinstance(audio, torch.Tensor):
             raise TypeError("Internal audio buffer must be torch.Tensor")
 
-        # Гарантируем минимальную длину для random crop.
         if n < self.min_frames:
             pad_n = self.min_frames - n
             pad_s = pad_n * self.HOP_LENGTH
@@ -160,7 +159,6 @@ class HybridPitchDataset(Dataset):
         start_id = WINDOW_LENGTH + start_frame * self.HOP_LENGTH - win_length_new // 2
         end_id = WINDOW_LENGTH + (end_frame - 1) * self.HOP_LENGTH + (win_length_new + 1) // 2
 
-        # На всякий случай расширяем буфер, если агрессивный key_shift вышел за границы.
         if start_id < 0 or end_id > len(audio):
             left_pad = max(0, -start_id)
             right_pad = max(0, end_id - len(audio))
@@ -202,7 +200,6 @@ class HybridPitchDataset(Dataset):
         c = cent[start_frame:end_frame].clone()
         v = voice[start_frame:end_frame].clone()
 
-        # Коррекция label под key-shift-аугментацию через изменение win_length.
         if key_shift != 0:
             c = c + 1200.0 * np.log2(win_length_new / WINDOW_LENGTH)
 
@@ -221,6 +218,7 @@ class HybridPitchDataset(Dataset):
             "cent": c,
             "file": audio_path,
             "label": data.get("label"),
+            "source_id": Path(audio_path).stem,
         }
 
     @staticmethod
@@ -265,8 +263,6 @@ class HybridPitchDataset(Dataset):
     def load(self, audio_path: str, label_path: Optional[str]):
         wav, _ = librosa.load(audio_path, sr=SAMPLE_RATE, mono=False)
 
-        # Если файл двухканальный, сохраняем совместимость со старым HYBRID:
-        # channel 0 = noise/accompaniment, channel 1 = target vocal.
         if isinstance(wav, np.ndarray) and wav.ndim > 1:
             if wav.shape[0] >= 2:
                 noise_np = wav[0]
@@ -315,8 +311,6 @@ class HybridPitchDataset(Dataset):
             "label": label_path,
         }
 
-    # ------------------------- label discovery -------------------------
-
     def _find_label_for_audio(self, audio_path: str) -> Optional[str]:
         p = Path(audio_path)
         stem = p.stem
@@ -326,7 +320,6 @@ class HybridPitchDataset(Dataset):
             if s and s not in candidate_stems:
                 candidate_stems.append(s)
 
-        # 1) рядом с аудио
         for s in candidate_stems:
             for ext in self.LABEL_EXTS:
                 candidate = p.with_name(s + ext)
@@ -336,8 +329,6 @@ class HybridPitchDataset(Dataset):
                 if candidate.exists():
                     return str(candidate)
 
-        # 2) частый случай: audio xxx_m.wav, label xxx.pv уже покрыт выше.
-        # 3) если рядом есть единственный label с похожим stem prefix.
         local_labels = []
         for ext in self.LABEL_EXTS:
             local_labels.extend(p.parent.glob(f"{stem}*{ext}"))
@@ -346,8 +337,6 @@ class HybridPitchDataset(Dataset):
             return str(local_labels[0])
 
         return None
-
-    # ------------------------- label loading -------------------------
 
     def _load_label(self, label_path: str, audio_path: str, n_frames: int) -> Tuple[np.ndarray, np.ndarray]:
         ext = Path(label_path).suffix.lower()
@@ -378,7 +367,6 @@ class HybridPitchDataset(Dataset):
         if not rows:
             return np.zeros(n_frames, dtype=np.float32), np.zeros(n_frames, dtype=np.float32)
 
-        # Один столбец: frame-wise pitch.
         if all(len(r) == 1 for r in rows):
             values = np.array([r[0] for r in rows], dtype=np.float64)
             unit = self._infer_unit(values, label_path, audio_path, column_name=None, default_for_pv="midi")
@@ -386,7 +374,6 @@ class HybridPitchDataset(Dataset):
             f0 = self._fit_1d_to_frames(f0, n_frames)
             return self._f0_to_cent_voice(f0)
 
-        # Два и более столбца: считаем first=time, second=value.
         times = np.array([r[0] for r in rows if len(r) >= 2], dtype=np.float64)
         values = np.array([r[1] for r in rows if len(r) >= 2], dtype=np.float64)
         unit = self._infer_unit(values, label_path, audio_path, column_name=None, default_for_pv="hz")
@@ -400,7 +387,6 @@ class HybridPitchDataset(Dataset):
 
         sep = "\t" if Path(label_path).suffix.lower() == ".tsv" else None
 
-        # Сначала пробуем header=0. Если колонки все Unnamed/числа — ниже будет fallback header=None.
         try:
             df = pd.read_csv(label_path, sep=sep, engine="python", comment="#")
         except Exception:
@@ -414,13 +400,11 @@ class HybridPitchDataset(Dataset):
         lower_cols = [str(c).strip().lower() for c in df.columns]
         df.columns = lower_cols
 
-        # Если pandas принял первую строку данных за header и имена колонок похожи на числа — читаем без header.
         if all(self._is_float_string(str(c)) for c in original_columns):
             df = pd.read_csv(label_path, sep=sep, engine="python", comment="#", header=None)
             df = df.dropna(how="all")
             df.columns = [str(i) for i in range(len(df.columns))]
 
-        # Приводим числовые колонки.
         for col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
         df = df.dropna(how="all")
@@ -436,7 +420,6 @@ class HybridPitchDataset(Dataset):
         voice_col = self._first_existing(df.columns, self.VOICE_COLUMNS)
         conf_col = self._first_existing(df.columns, self.CONF_COLUMNS)
 
-        # Headerless fallback.
         if value_col is None:
             numeric_cols = [c for c in df.columns if df[c].notna().any()]
             if len(numeric_cols) == 1:
@@ -446,7 +429,6 @@ class HybridPitchDataset(Dataset):
                 time_col, value_col = numeric_cols[0], numeric_cols[1]
                 value_unit = self._infer_unit(df[value_col].to_numpy(), label_path, audio_path, None, default_for_pv="hz")
             elif len(numeric_cols) >= 3:
-                # Частый interval format без header: onset, offset, note/f0
                 start_col, end_col, value_col = numeric_cols[0], numeric_cols[1], numeric_cols[2]
                 value_unit = self._infer_unit(df[value_col].to_numpy(), label_path, audio_path, None, default_for_pv="midi")
 
@@ -458,7 +440,6 @@ class HybridPitchDataset(Dataset):
         elif value_unit is None:
             value_unit = self._infer_unit(df[value_col].to_numpy(), label_path, audio_path, value_col, default_for_pv="hz")
 
-        # Interval/note формат: onset+offset+value или onset+duration+value.
         if start_col is not None and (end_col is not None or dur_col is not None):
             f0 = np.zeros(n_frames, dtype=np.float64)
             starts = df[start_col].to_numpy(dtype=np.float64)
@@ -488,11 +469,9 @@ class HybridPitchDataset(Dataset):
             voice_values = df[voice_col].to_numpy(dtype=np.float64)
             hz_values = np.where(voice_values > 0, hz_values, 0.0)
         if conf_col is not None:
-            # Если confidence явно 0, считаем unvoiced. Не вводим threshold, чтобы не терять слабие валидные участки.
             conf_values = df[conf_col].to_numpy(dtype=np.float64)
             hz_values = np.where(conf_values > 0, hz_values, 0.0)
 
-        # Frame-wise с time column.
         if time_col is not None:
             times = df[time_col].to_numpy(dtype=np.float64)
             f0 = self._time_values_to_frames(times, hz_values, n_frames)
@@ -500,8 +479,6 @@ class HybridPitchDataset(Dataset):
             f0 = self._fit_1d_to_frames(hz_values, n_frames)
 
         return self._f0_to_cent_voice(f0)
-
-    # ------------------------- conversion helpers -------------------------
 
     def _find_pitch_column(self, columns) -> Tuple[Optional[str], Optional[str]]:
         col = self._first_existing(columns, self.HZ_COLUMNS)
@@ -562,7 +539,6 @@ class HybridPitchDataset(Dataset):
         if med > 1000 or mx > 2000:
             return "cent"
         if mx <= 127:
-            # Для .pv/.txt чаще это MIDI, для time/value csv чаще может быть Hz.
             return default_for_pv
         return "hz"
 
@@ -621,10 +597,8 @@ class HybridPitchDataset(Dataset):
         times = times[order]
         values_hz = values_hz[order]
 
-        # Удаляем duplicate times, оставляя последнее значение.
-        unique_times, unique_indices = np.unique(times, return_index=True)
+        unique_times, _ = np.unique(times, return_index=True)
         if len(unique_times) != len(times):
-            # np.unique возвращает первый индекс, для простоты усредним дубликаты.
             new_values = []
             for t in unique_times:
                 new_values.append(np.mean(values_hz[times == t]))
@@ -644,8 +618,6 @@ class HybridPitchDataset(Dataset):
         interp_voice = np.interp(target_times, times, (values_hz > 0).astype(np.float64), left=0.0, right=0.0)
         interp_f0[interp_voice < 0.5] = 0.0
         return interp_f0
-
-    # ------------------------- augmentation helpers -------------------------
 
     def _generate_colored_noise(self, length: int) -> torch.Tensor:
         if length <= 0:
