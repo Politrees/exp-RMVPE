@@ -67,6 +67,24 @@ def bce_weighted_high(pred, target):
     return (loss * weight).mean()
 
 
+def selection_score(metrics):
+    """Метрика выбора лучшего чекпоинта.
+
+    Для задачи «закрыть обрыв высокого регистра» общий RPA обманывает: он
+    остаётся высоким за счёт обычного вокала, даже если 1000–2000 Hz не
+    улучшились. Поэтому сохраняем лучший по среднему RPA в 1000–1400 и
+    1400–2000 Hz; если этих кадров нет — откатываемся на общий RPA.
+    """
+    high = []
+    for band in ("1000_1400", "1400_2000"):
+        key = f"{band}_RPA"
+        if key in metrics and len(metrics[key]) > 0:
+            high.append(float(np.mean(metrics[key])))
+    if high:
+        return float(np.mean(high))
+    return float(np.mean(metrics["RPA"]))
+
+
 def train(model_name, data_dir, exp_dir, label_dir, batch_size, init_from, loss_name='bce'):
     print("Начало обучения модели:", model_name, flush=True)
 
@@ -126,6 +144,7 @@ def train(model_name, data_dir, exp_dir, label_dir, batch_size, init_from, loss_
     scheduler = CosineAnnealingLR(optimizer, T_max=iterations, eta_min=1e-6)
 
     best_rpa = 0.0
+    best_score = 0.0
 
     if init_from is not None:
         print(f"Initializing from {init_from}", flush=True)
@@ -178,6 +197,7 @@ def train(model_name, data_dir, exp_dir, label_dir, batch_size, init_from, loss_
 
         resume_iteration = ckpt.get('iteration', 0)
         best_rpa = ckpt.get('best_rpa', 0.0)
+        best_score = ckpt.get('best_score', 0.0)
 
     if not isinstance(model, nn.DataParallel):
         summary(model)
@@ -264,6 +284,9 @@ def train(model_name, data_dir, exp_dir, label_dir, batch_size, init_from, loss_
                     if key in metrics and len(metrics[key]) > 0:
                         print(f"  {band_name:>9} ({lo:.0f}-{hi:.0f} Hz) RPA: {np.mean(metrics[key]):.4f}", flush=True)
 
+                score = selection_score(metrics)
+                print(f"  high_register_score: {score:.4f}", flush=True)
+
                 with open(result_path, 'a') as f:
                     f.write(str(i) + '\t')
                     f.write(str(RPA) + '\t')
@@ -273,10 +296,12 @@ def train(model_name, data_dir, exp_dir, label_dir, batch_size, init_from, loss_
                     f.write(str(VFA) + '\n')
 
                 is_best = False
+                if score >= best_score:
+                    best_score = score
+                    is_best = True
+                    print(f'New best model at {i} (score={score:.4f})!', flush=True)
                 if rpa >= best_rpa:
                     best_rpa = rpa
-                    is_best = True
-                    print(f'New best model at {i}!', flush=True)
 
                 model_to_save = model.module if isinstance(model, nn.DataParallel) else model
                 checkpoint_dict = {
@@ -284,7 +309,8 @@ def train(model_name, data_dir, exp_dir, label_dir, batch_size, init_from, loss_
                     'model': model_to_save.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'scheduler': scheduler.state_dict(),
-                    'best_rpa': best_rpa
+                    'best_rpa': best_rpa,
+                    'best_score': best_score
                 }
 
                 if is_best:
