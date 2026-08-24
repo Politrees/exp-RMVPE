@@ -17,4 +17,3 @@ class BiLSTM(nn.Module):
 
     def forward(self, x):
         return self.lstm(x)[0]
-

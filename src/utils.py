@@ -146,5 +146,3 @@ def to_viterbi_f0(hidden, thred=0.03):
     center = torch.from_numpy(path).unsqueeze(0).unsqueeze(-1).to(hidden.device)
     
     return to_local_average_f0(hidden, center=center, thred=thred)
-    
-        

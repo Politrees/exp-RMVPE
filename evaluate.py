@@ -8,6 +8,31 @@ from src.constants import SAMPLE_RATE
 from mir_eval.melody import raw_pitch_accuracy, to_cent_voicing, raw_chroma_accuracy, overall_accuracy
 from mir_eval.melody import voicing_recall, voicing_false_alarm
 
+# Границы регистров, по которым дополнительно считаются метрики.
+# Глобальные RPA/OA маскируют проблему «обрыва» около 1040 Hz, поэтому
+# отдельно считаем верхний регистр.
+REGISTER_BANDS = [
+    ("lt700", 0.0, 700.0),
+    ("700_1000", 700.0, 1000.0),
+    ("1000_1400", 1000.0, 1400.0),
+    ("1400_2000", 1400.0, 2000.0),
+]
+
+
+def _register_metrics(metrics, name, lo, hi, freq, freq_pred, hop_length):
+    # Reference pitch, попавший в текущий регистр.
+    mask = (freq > lo) & (freq <= hi)
+    if np.sum(mask) > 0:
+        t = np.arange(len(freq)) * hop_length / SAMPLE_RATE
+        mref_v, mref_c, mest_v, mest_c = to_cent_voicing(t[mask], freq[mask], t[mask], freq_pred[mask])
+        if np.sum(mref_v) > 0:
+            prefix = f"{name}_"
+            metrics[prefix + "RPA"].append(raw_pitch_accuracy(mref_v, mref_c, mest_v, mest_c))
+            metrics[prefix + "RCA"].append(raw_chroma_accuracy(mref_v, mref_c, mest_v, mest_c))
+            metrics[prefix + "OA"].append(overall_accuracy(mref_v, mref_c, mest_v, mest_c))
+            metrics[prefix + "VR"].append(voicing_recall(mref_v, mest_v))
+            metrics[prefix + "VFA"].append(voicing_false_alarm(mref_v, mest_v))
+
 
 @torch.inference_mode()
 def evaluate(dataset, model, hop_length, device, pitch_th=0.03):
@@ -69,6 +94,10 @@ def evaluate(dataset, model, hop_length, device, pitch_th=0.03):
         metrics['OA'].append(oa)
         metrics['VFA'].append(vfa)
         metrics['VR'].append(vr)
+
+        for band_name, lo, hi in REGISTER_BANDS:
+            _register_metrics(metrics, band_name, lo, hi, freq, freq_pred, hop_length)
+
         # if rpa < 0.9:
         print(data['file'], ':\t', rpa, '\t', oa)
 

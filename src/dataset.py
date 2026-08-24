@@ -49,7 +49,7 @@ class HybridPitchDataset(Dataset):
         segment_frames: int = 256,
         min_frames: Optional[int] = None,
         label_unit: str = "auto",  # auto | midi | hz | cent
-        key_shift_range: Tuple[float, float] = (-5.0, 5.0),
+        key_shift_range: Tuple[float, float] = (-12.0, 12.0),
         noise_beta_range: Tuple[float, float] = (0.0, 2.0),
         noise_amp_log10_range: Tuple[float, float] = (-6.0, -1.0),
         volume_log10_range: Tuple[float, float] = (-1.0, 1.0),
@@ -59,9 +59,11 @@ class HybridPitchDataset(Dataset):
         allow_missing_labels: bool = False,
         recursive: bool = False,
         verbose: bool = True,
+        label_dir: Optional[str] = None,
     ):
         super().__init__()
         self.path = path
+        self.label_dir = os.path.abspath(label_dir) if label_dir else None
         self.HOP_LENGTH = int(hop_length)
         self.hop_length = int(hop_length)
         self.num_class = N_CLASS
@@ -151,6 +153,13 @@ class HybridPitchDataset(Dataset):
 
         if self.use_aug:
             key_shift = random.uniform(*self.key_shift_range)
+            # Верхний регистр (сопрано/свист) почти синусоидальный, и именно
+            # там RMVPE ошибается на октаву. Чтобы модель увидела такой регистр
+            # даже если датасет вокальный и ниже C6, в ~25% кадров переносим
+            # сегмент на октаву/две вверх. Это тот же mel-keyshift, что и выше;
+            # метки корректируются автоматически через win_length (ниже).
+            if random.random() < 0.25:
+                key_shift += random.choice((12.0, 24.0))
         else:
             key_shift = 0.0
 
@@ -240,8 +249,12 @@ class HybridPitchDataset(Dataset):
         pairs: List[Tuple[str, Optional[str]]] = []
         missing: List[str] = []
 
+        group_label_dir = self.label_dir
+        if group_label_dir and group:
+            group_label_dir = os.path.join(group_label_dir, group)
+
         for audio_path in audio_files:
-            label_path = self._find_label_for_audio(audio_path)
+            label_path = self._find_label_for_audio(audio_path, label_dir=group_label_dir)
             if label_path is None:
                 missing.append(audio_path)
                 if self.allow_missing_labels:
@@ -317,7 +330,7 @@ class HybridPitchDataset(Dataset):
 
     # ------------------------- label discovery -------------------------
 
-    def _find_label_for_audio(self, audio_path: str) -> Optional[str]:
+    def _find_label_for_audio(self, audio_path: str, label_dir: Optional[str] = None) -> Optional[str]:
         p = Path(audio_path)
         stem = p.stem
 
@@ -325,6 +338,25 @@ class HybridPitchDataset(Dataset):
         for s in (stem, stem.replace("_m", ""), stem.replace("_p", ""), stem.replace("_vocal", "")):
             if s and s not in candidate_stems:
                 candidate_stems.append(s)
+
+        # 0) отдельный каталог с метками (MIR-1K хранит Wavfile/ и PitchLabel/ раздельно)
+        search_label_dir = self.label_dir if label_dir is None else label_dir
+        if search_label_dir is not None:
+            lp = Path(search_label_dir)
+            for s in candidate_stems:
+                for ext in self.LABEL_EXTS:
+                    candidate = lp / f"{s}{ext}"
+                    if candidate.exists():
+                        return str(candidate)
+                    candidate = lp / f"{s}{ext.upper()}"
+                    if candidate.exists():
+                        return str(candidate)
+            local_labels = []
+            for ext in self.LABEL_EXTS:
+                local_labels.extend(lp.glob(f"{stem}*{ext}"))
+                local_labels.extend(lp.glob(f"{stem}*{ext.upper()}"))
+            if len(local_labels) == 1:
+                return str(local_labels[0])
 
         # 1) рядом с аудио
         for s in candidate_stems:
